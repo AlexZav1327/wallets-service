@@ -8,14 +8,19 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+func showInfo(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+	currentTime := now.Format("02-01-2006 15:04:05")
+	fmt.Fprintf(w, "Current time: %s\n", currentTime)
+
+	ipAddress := r.RemoteAddr
+	fmt.Fprintf(w, "Your IP address is: %s", ipAddress)
+}
+
 func main() {
 	port := "8080"
 
-	http.HandleFunc("/time", func(w http.ResponseWriter, r *http.Request) {
-		now := time.Now()
-		currentTime := now.Format("02-01-2006 15:04:05")
-		fmt.Fprint(w, currentTime)
-	})
+	http.HandleFunc("/info", showInfo)
 
 	fmt.Printf("Server is running on http://localhost:%s\n", port)
 
