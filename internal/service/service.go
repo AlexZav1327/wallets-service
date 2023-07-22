@@ -7,8 +7,9 @@ import (
 )
 
 type VisitInfo struct {
-	timeVisit string
-	ipAddress string
+	timeVisit   string
+	ipAddress   string
+	summaryInfo string
 }
 
 func (v *VisitInfo) ShowVisitInfo(w http.ResponseWriter, r *http.Request) {
@@ -18,11 +19,11 @@ func (v *VisitInfo) ShowVisitInfo(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Current date and time is: %s\n\n", currentTime)
 	fmt.Fprintf(w, "Your IP address is: %s", r.RemoteAddr)
 
-	v.timeVisit += fmt.Sprintf("%s\n", currentTime)
-	v.ipAddress += fmt.Sprintf("%s\n", r.RemoteAddr)
+	v.timeVisit = fmt.Sprintf("Date and time: %s", currentTime)
+	v.ipAddress = fmt.Sprintf("IP address: %s", r.RemoteAddr)
+	v.summaryInfo += fmt.Sprintf("%s\t%s\n", v.timeVisit, v.ipAddress)
 }
 
 func (v *VisitInfo) ShowPrevVisitInfo(w http.ResponseWriter, _ *http.Request) {
-	fmt.Fprintf(w, "Previous visits date and time were:\n%s\n\n", v.timeVisit)
-	fmt.Fprintf(w, "Previous user's IP addresses were:\n%s", v.ipAddress)
+	fmt.Fprintf(w, "Previous visits information:\n\n%s\n", v.summaryInfo)
 }

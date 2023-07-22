@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	server := server.NewServer("localhost", 8088, service.VisitInfo{})
+	server := server.NewServer("localhost", 8089, service.VisitInfo{})
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
 	defer cancel()
