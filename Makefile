@@ -1,5 +1,5 @@
 build:
-	go build -o bin/service cmd/server/main.go
+	go build -o bin/service cmd/base-point/main.go
 
 fmt:
 	gofumpt -w .
@@ -11,4 +11,4 @@ lint: build fmt tidy
 	golangci-lint run ./...
 
 run:
-	go run cmd/server/main.go
+	go run cmd/base-point/main.go
