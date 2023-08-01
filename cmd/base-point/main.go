@@ -7,6 +7,7 @@ import (
 
 	"github.com/AlexZav1327/service/internal/server"
 	"github.com/AlexZav1327/service/internal/service"
+	log "github.com/sirupsen/logrus"
 )
 
 func main() {
@@ -15,5 +16,12 @@ func main() {
 
 	defer cancel()
 
-	server.Run(ctx)
+	err := server.Run(ctx)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"package":  "main",
+			"function": "Run",
+			"error":    err,
+		}).Panic()
+	}
 }

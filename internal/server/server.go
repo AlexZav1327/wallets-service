@@ -67,7 +67,7 @@ func NewServer(host string, port int, service service.AccessData) *Server {
 	return &server
 }
 
-func (s *Server) Run(ctx context.Context) {
+func (s *Server) Run(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 
 	defer cancel()
@@ -84,11 +84,10 @@ func (s *Server) Run(ctx context.Context) {
 		}
 	}()
 
-	if err := s.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.WithFields(log.Fields{
-			"package":  "server",
-			"function": "Run",
-			"error":    err,
-		}).Error("Server error")
+	err := s.server.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("Server starting error: %w", err)
 	}
+
+	return nil
 }
