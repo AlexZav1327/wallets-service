@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	server := server.NewServer("localhost", 8080, service.AccessData{})
+	server := server.NewServer("", 8080, service.AccessData{})
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
 	defer cancel()
