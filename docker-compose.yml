@@ -3,7 +3,7 @@ version: '3.8'
 services:
   pg:
     image: postgres:latest
-    container_name: web-service_pg
+    container_name: web-service_postgres
     environment:
       POSTGRES_DB: web-service
       POSTGRES_USER: user

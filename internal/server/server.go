@@ -86,7 +86,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	err := s.server.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("Server starting error: %w", err)
+		log.Errorf("Server starting error: %s", err)
 	}
 
 	return nil

@@ -12,3 +12,9 @@ lint: build fmt tidy
 
 run:
 	go run cmd/base-point/main.go
+
+up:
+	docker compose up -d
+
+down:
+	docker compose down
