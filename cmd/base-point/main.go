@@ -6,12 +6,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	migrate "github.com/rubenv/sql-migrate"
-
 	"github.com/AlexZav1327/service/internal/postgres"
 	"github.com/AlexZav1327/service/internal/server"
 	"github.com/AlexZav1327/service/internal/service"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	migrate "github.com/rubenv/sql-migrate"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -24,29 +23,18 @@ func main() {
 
 	pg, err := postgres.ConnectDB(ctx, dsn)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"package":  "main",
-			"function": "ConnectDB",
-			"error":    err,
-		}).Error("Unable to get postgres")
+		log.Panicf("postgres.ConnectDB(ctx, dsn): %s", err)
 	}
 
-	if err = pg.Migrate(migrate.Up); err != nil {
-		log.WithFields(log.Fields{
-			"package":  "main",
-			"function": "Migrate",
-			"error":    err,
-		}).Error("Unable to migrate")
+	err = pg.Migrate(migrate.Up)
+	if err != nil {
+		log.Panicf("pg.Migrate(migrate.Up): %s", err)
 	}
 
-	webServer := server.NewServer("", 8080, service.AccessData{}, pg)
+	webServer := server.NewServer("", 8083, service.NewAccessData(pg))
 
 	err = webServer.Run(ctx)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"package":  "main",
-			"function": "Run",
-			"error":    err,
-		}).Error("Unable to run server")
+		log.Panicf("webServer.Run(ctx): %s", err)
 	}
 }

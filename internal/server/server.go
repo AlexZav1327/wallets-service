@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/AlexZav1327/service/internal/postgres"
-
 	"github.com/AlexZav1327/service/internal/service"
 	"github.com/go-chi/chi/v5"
 	log "github.com/sirupsen/logrus"
@@ -19,59 +17,44 @@ type Server struct {
 	port    int
 	server  *http.Server
 	service service.AccessData
-	pg      postgres.Postgres
 }
 
 func getCurrentTime() string {
-	now := time.Now()
+	location, err := time.LoadLocation("Europe/Moscow")
+	if err != nil {
+		log.Panicf("time.LoadLocation(): %s", err)
+	}
 
-	return now.Format("02-01-2006 15:04:05")
+	now := time.Now().In(location)
+
+	return now.Format("2006-01-02 15:04:05")
 }
 
-func NewServer(host string, port int, service service.AccessData, pg *postgres.Postgres) *Server {
+func NewServer(host string, port int, service *service.AccessData) *Server {
 	server := Server{
 		host:    host,
 		port:    port,
-		service: service,
-		pg:      *pg,
+		service: *service,
 	}
 
 	r := chi.NewRouter()
 
 	r.Get("/now", func(w http.ResponseWriter, r *http.Request) {
-		if err := pg.StoreAccessData(r.RemoteAddr, getCurrentTime()); err != nil {
-			log.WithFields(log.Fields{
-				"package":  "server",
-				"function": "NewServer",
-				"error":    err,
-			}).Error("Unable to store current access data in the database")
+		err := service.SaveAccessData(r.Context(), r.RemoteAddr, getCurrentTime())
+		if err != nil {
+			log.Panicf("service.SaveAccessData(): %s", err)
 		}
 
-		if _, err := w.Write([]byte(service.ShowCurrentAccessData(r.RemoteAddr, getCurrentTime()))); err != nil {
-			log.WithFields(log.Fields{
-				"package":  "server",
-				"function": "NewServer",
-				"error":    err,
-			}).Warning("Unable to show current access data")
+		_, err = w.Write([]byte(service.ShowCurrentAccessData(r.RemoteAddr, getCurrentTime())))
+		if err != nil {
+			log.Panicf("w.Write([]byte(service.ShowCurrentAccessData())): %s", err)
 		}
 	})
 
 	r.Get("/prev", func(w http.ResponseWriter, r *http.Request) {
-		data, err := pg.FetchAccessData()
+		_, err := w.Write([]byte(service.ShowPreviousAccessData(r.Context())))
 		if err != nil {
-			log.WithFields(log.Fields{
-				"package":  "server",
-				"function": "NewServer",
-				"error":    err,
-			}).Error("Unable to fetch current access data from the database")
-		}
-
-		if _, err := w.Write([]byte(service.ShowPreviousAccessData(data))); err != nil {
-			log.WithFields(log.Fields{
-				"package":  "server",
-				"function": "NewServer",
-				"error":    err,
-			}).Warning("Unable to show previous access data")
+			log.Panicf("w.Write([]byte(service.ShowPreviousAccessData())): %s", err)
 		}
 	})
 
@@ -92,22 +75,15 @@ func (s *Server) Run(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 
-		if err := s.server.Shutdown(shutdownCtx); err != nil {
-			log.WithFields(log.Fields{
-				"package":  "server",
-				"function": "Run",
-				"error":    err,
-			}).Warning("Closing server")
+		err := s.server.Shutdown(shutdownCtx)
+		if err != nil {
+			log.Warningf("s.server.Shutdown(shutdownCtx): %s", err)
 		}
 	}()
 
 	err := s.server.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.WithFields(log.Fields{
-			"package":  "server",
-			"function": "Run",
-			"error":    err,
-		}).Error("Unable to start server")
+		return fmt.Errorf("s.server.ListenAndServe(): %w", err)
 	}
 
 	return nil

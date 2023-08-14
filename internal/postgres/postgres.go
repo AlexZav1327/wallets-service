@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,42 +16,22 @@ import (
 //go:embed migrations
 var migrations embed.FS
 
+var ErrNoRows = errors.New("no records")
+
 type Postgres struct {
 	db  *pgx.Conn
 	dsn string
 }
 
 func ConnectDB(ctx context.Context, dsn string) (*Postgres, error) {
-	config, err := pgx.ParseConfig(dsn)
+	db, err := pgx.Connect(ctx, dsn)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"package":  "postgres",
-			"function": "ConnectDB",
-			"error":    err,
-		}).Error("Unable to parse config")
-
-		return nil, err
+		return nil, fmt.Errorf("pgx.Connect(ctx, dsn): %w", err)
 	}
 
-	db, err := pgx.ConnectConfig(ctx, config)
+	err = db.Ping(ctx)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"package":  "postgres",
-			"function": "ConnectDB",
-			"error":    err,
-		}).Error("Unable to connect config")
-
-		return nil, err
-	}
-
-	if err = db.Ping(ctx); err != nil {
-		log.WithFields(log.Fields{
-			"package":  "postgres",
-			"function": "ConnectDB",
-			"error":    err,
-		}).Warning("Unable to ping")
-
-		return nil, err
+		return nil, fmt.Errorf("db.Ping(ctx): %w", err)
 	}
 
 	return &Postgres{
@@ -61,20 +43,13 @@ func ConnectDB(ctx context.Context, dsn string) (*Postgres, error) {
 func (p *Postgres) Migrate(direction migrate.MigrationDirection) error {
 	conn, err := sql.Open("pgx", p.dsn)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"package":  "postgres",
-			"function": "Migrate",
-			"error":    err,
-		}).Error("Unable to migrate")
+		return fmt.Errorf("sql.Open(\"pgx\", p.dsn): %w", err)
 	}
 
 	defer func() {
-		if err := conn.Close(); err != nil {
-			log.WithFields(log.Fields{
-				"package":  "postgres",
-				"function": "Migrate",
-				"error":    err,
-			}).Warning("Unable to close migration connection")
+		err := conn.Close()
+		if err != nil {
+			log.Errorf("conn.Close(): %s", err)
 		}
 	}()
 
@@ -82,7 +57,7 @@ func (p *Postgres) Migrate(direction migrate.MigrationDirection) error {
 		return func(path string) ([]string, error) {
 			dirEntry, err := migrations.ReadDir(path)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("migrations.ReadDir(path): %w", err)
 			}
 
 			entries := make([]string, 0)
@@ -103,66 +78,49 @@ func (p *Postgres) Migrate(direction migrate.MigrationDirection) error {
 
 	_, err = migrate.Exec(conn, "postgres", asset, direction)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"package":  "postgres",
-			"function": "Migrate",
-			"error":    err,
-		}).Error("Unable to execute a set of migrations")
+		return fmt.Errorf("migrate.Exec(conn, \"postgres\", asset, direction): %w", err)
 	}
 
-	return err
+	return nil
 }
 
-func (p *Postgres) StoreAccessData(userIP string, accessTime string) error {
-	query := `INSERT INTO access_data (user_ip, access_time) VALUES ($1, $2);`
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-
-	defer cancel()
+func (p *Postgres) StoreAccessData(ctx context.Context, userIP string, accessTime string) error {
+	query := `INSERT INTO access_data (user_ip, access_time) VALUES ($1, $2 AT TIME ZONE 'Europe/Moscow');`
 
 	_, err := p.db.Exec(ctx, query, userIP, accessTime)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"package":  "postgres",
-			"function": "StoreAccessData",
-			"error":    err,
-		}).Error("Unable to insert access data to database")
+		return fmt.Errorf("p.db.Exec(ctx, query, userIP, accessTime): %w", err)
 	}
 
-	return err
+	return nil
 }
 
-func (p *Postgres) FetchAccessData() (map[string][]string, error) {
+func (p *Postgres) FetchAccessData(ctx context.Context) (map[string][]time.Time, error) {
 	query := `SELECT user_ip, access_time FROM access_data;`
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-
-	defer cancel()
-
 	rows, err := p.db.Query(ctx, query)
-	if err != nil {
-		log.WithFields(log.Fields{
-			"package":  "postgres",
-			"function": "FetchAccessData",
-			"error":    err,
-		}).Error("Unable to query access data from database")
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("p.db.Query(ctx, query): %w", err)
 	}
 
 	defer rows.Close()
 
-	data := make(map[string][]string)
+	data := make(map[string][]time.Time)
+
+	ok := rows.Next()
+
+	if !ok {
+		return nil, fmt.Errorf("rows.Next(): %w", ErrNoRows)
+	}
 
 	for rows.Next() {
 		var userIP string
 
-		var accessTime string
+		var accessTime time.Time
 
-		if err := rows.Scan(&userIP, &accessTime); err != nil {
-			log.WithFields(log.Fields{
-				"package":  "postgres",
-				"function": "FetchAccessData",
-				"error":    err,
-			}).Error("Unable to scan row")
+		err := rows.Scan(&userIP, &accessTime)
+		if err != nil {
+			log.Panicf("rows.Scan(&userIP, &accessTime): %s", err)
 		}
 
 		_, ok := data[userIP]
@@ -170,17 +128,14 @@ func (p *Postgres) FetchAccessData() (map[string][]string, error) {
 		if ok {
 			data[userIP] = append(data[userIP], accessTime)
 		} else {
-			data[userIP] = []string{accessTime}
+			data[userIP] = []time.Time{accessTime}
 		}
 
-		if err = rows.Err(); err != nil {
-			log.WithFields(log.Fields{
-				"package":  "postgres",
-				"function": "FetchAccessData",
-				"error":    err,
-			}).Error("Unable to iterate through access data rows")
+		err = rows.Err()
+		if err != nil {
+			log.Panicf("rows.Err(): %s", err)
 		}
 	}
 
-	return data, err
+	return data, nil
 }
