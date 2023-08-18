@@ -1,5 +1,5 @@
 build:
-	go build -o bin/service cmd/base-point/main.go
+	go build -o bin/service cmd/app/main.go
 
 fmt:
 	gofumpt -w .
@@ -11,7 +11,7 @@ lint: build fmt tidy
 	golangci-lint run ./...
 
 run:
-	go run cmd/base-point/main.go
+	go run cmd/app/main.go
 
 up:
 	docker compose up -d

@@ -10,20 +10,21 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	migrate "github.com/rubenv/sql-migrate"
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 )
 
 //go:embed migrations
 var migrations embed.FS
 
-var ErrNoRows = errors.New("no records")
+var ErrNoRecords = errors.New("no records")
 
 type Postgres struct {
 	db  *pgx.Conn
+	log *logrus.Entry
 	dsn string
 }
 
-func ConnectDB(ctx context.Context, dsn string) (*Postgres, error) {
+func ConnectDB(ctx context.Context, log *logrus.Logger, dsn string) (*Postgres, error) {
 	db, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("pgx.Connect(ctx, dsn): %w", err)
@@ -36,6 +37,7 @@ func ConnectDB(ctx context.Context, dsn string) (*Postgres, error) {
 
 	return &Postgres{
 		db:  db,
+		log: log.WithField("module", "db"),
 		dsn: dsn,
 	}, nil
 }
@@ -49,7 +51,7 @@ func (p *Postgres) Migrate(direction migrate.MigrationDirection) error {
 	defer func() {
 		err := conn.Close()
 		if err != nil {
-			log.Errorf("conn.Close(): %s", err)
+			p.log.Warningf("conn.Close(): %s", err)
 		}
 	}()
 
@@ -84,12 +86,12 @@ func (p *Postgres) Migrate(direction migrate.MigrationDirection) error {
 	return nil
 }
 
-func (p *Postgres) StoreAccessData(ctx context.Context, userIP string, accessTime string) error {
-	query := `INSERT INTO access_data (user_ip, access_time) VALUES ($1, $2 AT TIME ZONE 'Europe/Moscow');`
+func (p *Postgres) StoreAccessData(ctx context.Context, userIP string) error {
+	query := `INSERT INTO access_data (user_ip) VALUES ($1);`
 
-	_, err := p.db.Exec(ctx, query, userIP, accessTime)
+	_, err := p.db.Exec(ctx, query, userIP)
 	if err != nil {
-		return fmt.Errorf("p.db.Exec(ctx, query, userIP, accessTime): %w", err)
+		return fmt.Errorf("db.Exec(ctx, query, userIP, accessTime): %w", err)
 	}
 
 	return nil
@@ -100,18 +102,12 @@ func (p *Postgres) FetchAccessData(ctx context.Context) (map[string][]time.Time,
 
 	rows, err := p.db.Query(ctx, query)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("p.db.Query(ctx, query): %w", err)
+		return nil, fmt.Errorf("db.Query(ctx, query): %w", err)
 	}
 
 	defer rows.Close()
 
 	data := make(map[string][]time.Time)
-
-	ok := rows.Next()
-
-	if !ok {
-		return nil, fmt.Errorf("rows.Next(): %w", ErrNoRows)
-	}
 
 	for rows.Next() {
 		var userIP string
@@ -120,7 +116,7 @@ func (p *Postgres) FetchAccessData(ctx context.Context) (map[string][]time.Time,
 
 		err := rows.Scan(&userIP, &accessTime)
 		if err != nil {
-			log.Panicf("rows.Scan(&userIP, &accessTime): %s", err)
+			p.log.Warningf("rows.Scan(&userIP, &accessTime): %s", err)
 		}
 
 		_, ok := data[userIP]
@@ -130,11 +126,15 @@ func (p *Postgres) FetchAccessData(ctx context.Context) (map[string][]time.Time,
 		} else {
 			data[userIP] = []time.Time{accessTime}
 		}
+	}
 
-		err = rows.Err()
-		if err != nil {
-			log.Panicf("rows.Err(): %s", err)
-		}
+	err = rows.Err()
+	if err != nil {
+		p.log.Warningf("rows.Err(): %s", err)
+	}
+
+	if len(data) == 0 {
+		return nil, ErrNoRecords
 	}
 
 	return data, nil
