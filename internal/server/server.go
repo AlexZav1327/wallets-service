@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/AlexZav1327/service/internal/handler"
 	"github.com/AlexZav1327/service/internal/service"
 	"github.com/go-chi/chi/v5"
 	"github.com/sirupsen/logrus"
@@ -29,11 +28,11 @@ func NewServer(host string, port int, service *service.AccessData, log *logrus.L
 		service: *service,
 	}
 
-	h := handler.NewHandler(service, log)
+	h := NewHandler(service, log)
 	r := chi.NewRouter()
 
-	r.Get("/now", h.Current)
-	r.Get("/prev", h.Previous)
+	r.Get("/now", h.current)
+	r.Get("/prev", h.previous)
 
 	server.server = &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", host, port),

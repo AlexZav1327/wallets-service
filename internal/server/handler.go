@@ -1,4 +1,4 @@
-package handler
+package server
 
 import (
 	"net/http"
@@ -22,7 +22,7 @@ func NewHandler(service *service.AccessData, log *logrus.Logger) *Handler {
 	}
 }
 
-func (h *Handler) Current(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) current(w http.ResponseWriter, r *http.Request) {
 	err := h.service.SaveAccessData(r.Context(), r.RemoteAddr)
 	if err != nil {
 		h.log.Warningf("service.SaveAccessData(r.Context(), r.RemoteAddr): %s", err)
@@ -34,7 +34,7 @@ func (h *Handler) Current(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) Previous(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) previous(w http.ResponseWriter, r *http.Request) {
 	previousAccessData, err := h.service.ShowPreviousAccessData(r.Context())
 	if err != nil {
 		h.log.Warningf("service.ShowPreviousAccessData(r.Context()): %s", err)
