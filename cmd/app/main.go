@@ -2,13 +2,12 @@ package main
 
 import (
 	"context"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/AlexZav1327/service/internal/httpserver"
 	"github.com/AlexZav1327/service/internal/postgres"
-	"github.com/AlexZav1327/service/internal/server"
 	"github.com/AlexZav1327/service/internal/service"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	migrate "github.com/rubenv/sql-migrate"
@@ -24,18 +23,18 @@ func main() {
 
 	pg, err := postgres.ConnectDB(ctx, logger, dsn)
 	if err != nil {
-		log.Panicf("postgres.ConnectDB(ctx, dsn): %s", err)
+		logger.Panicf("postgres.ConnectDB: %s", err)
 	}
 
 	err = pg.Migrate(migrate.Up)
 	if err != nil {
-		log.Panicf("Migrate(migrate.Up): %s", err)
+		logger.Panicf("Migrate: %s", err)
 	}
 
-	webServer := server.NewServer("", 8080, service.NewAccessData(pg, logger), logger)
+	webServer := httpserver.NewServer("", 8080, service.NewWallet(pg, logger), logger)
 
 	err = webServer.Run(ctx)
 	if err != nil {
-		log.Panicf("webServer.Run(ctx): %s", err)
+		logger.Panicf("webServer.Run: %s", err)
 	}
 }

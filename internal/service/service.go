@@ -4,53 +4,100 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/AlexZav1327/service/internal/postgres"
+	"github.com/AlexZav1327/service/models"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
-const dataTimeFmt = "2006-01-02 15:04:05"
-
-type AccessData struct {
-	pg  postgres.Postgres
+type Wallet struct {
+	pg  WalletStore
 	log *logrus.Entry
 }
 
-func NewAccessData(pg *postgres.Postgres, log *logrus.Logger) *AccessData {
-	return &AccessData{
-		pg:  *pg,
+type WalletStore interface {
+	CreateWallet(ctx context.Context, id uuid.UUID, owner string, balance float32) ([]models.WalletData, error)
+	FetchWalletsList(ctx context.Context) ([]models.WalletData, error)
+	FetchWalletByID(ctx context.Context, id string) ([]models.WalletData, error)
+	UpdateWallet(ctx context.Context, id string, owner string, balance float32) ([]models.WalletData, error)
+	DeleteWallet(ctx context.Context, id string) error
+}
+
+func NewWallet(pg WalletStore, log *logrus.Logger) *Wallet {
+	return &Wallet{
+		pg:  pg,
 		log: log.WithField("module", "service"),
 	}
 }
 
-func (a *AccessData) SaveAccessData(ctx context.Context, ip string) error {
-	err := a.pg.StoreAccessData(ctx, ip)
+func (*Wallet) generateUUID() uuid.UUID {
+	return uuid.New()
+}
+
+func (w *Wallet) Create(ctx context.Context, wallet models.WalletData) ([]models.WalletData, error) {
+	id := w.generateUUID()
+
+	createdWallet, err := w.pg.CreateWallet(ctx, id, *wallet.Owner, *wallet.Balance)
 	if err != nil {
-		return fmt.Errorf("StoreAccessData(ip, time): %w", err)
+		return nil, fmt.Errorf("pg.CreateWallet: %w", err)
+	}
+
+	return createdWallet, nil
+}
+
+func (w *Wallet) GetList(ctx context.Context) ([]models.WalletData, error) {
+	walletsList, err := w.pg.FetchWalletsList(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("FetchWalletsList: %w", err)
+	}
+
+	return walletsList, nil
+}
+
+func (w *Wallet) Get(ctx context.Context, id string) ([]models.WalletData, error) {
+	wallet, err := w.pg.FetchWalletByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("pg.FetchWalletByID: %w", err)
+	}
+
+	return wallet, nil
+}
+
+func (w *Wallet) Update(ctx context.Context, id string, wallet models.WalletData) ([]models.WalletData, error) {
+	data, err := w.pg.FetchWalletByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("pg.FetchWalletByID: %w", err)
+	}
+
+	currentWallet := data[0]
+	newWallet := models.WalletData{}
+
+	if wallet.Owner != nil && wallet.Owner != currentWallet.Owner {
+		newWallet.Owner = wallet.Owner
+	} else {
+		newWallet.Owner = currentWallet.Owner
+	}
+
+	if wallet.Balance != nil && wallet.Balance != currentWallet.Balance {
+		newWallet.Balance = wallet.Balance
+	} else {
+		newWallet.Balance = currentWallet.Balance
+	}
+
+	var updatedWallet []models.WalletData
+
+	updatedWallet, err = w.pg.UpdateWallet(ctx, id, *newWallet.Owner, *newWallet.Balance)
+	if err != nil {
+		return nil, fmt.Errorf("pg.UpdateWallet: %w", err)
+	}
+
+	return updatedWallet, nil
+}
+
+func (w *Wallet) Delete(ctx context.Context, id string) error {
+	err := w.pg.DeleteWallet(ctx, id)
+	if err != nil {
+		return fmt.Errorf("pg.DeleteWallet: %w", err)
 	}
 
 	return nil
-}
-
-func (*AccessData) ShowCurrentAccessData(ip string, time string) string {
-	return fmt.Sprintf("Your IP address is: %s\tCurrent date and time is: %s", ip, time)
-}
-
-func (a *AccessData) ShowPreviousAccessData(ctx context.Context) (string, error) {
-	data, err := a.pg.FetchAccessData(ctx)
-	if err != nil {
-		return "", fmt.Errorf("FetchAccessData(): %w", err)
-	}
-
-	var convertedData string
-
-	for ip, time := range data {
-		var convertedTime string
-		for _, v := range time {
-			convertedTime += fmt.Sprintf("%s; ", v.Format(dataTimeFmt))
-		}
-
-		convertedData += fmt.Sprintf("IP address: %s\tDate and time: %s\n", ip, convertedTime[:len(convertedTime)-2])
-	}
-
-	return convertedData, nil
 }
