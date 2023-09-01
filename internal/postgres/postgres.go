@@ -18,7 +18,10 @@ import (
 //go:embed migrations
 var migrations embed.FS
 
-var ErrNoRecords = errors.New("no records")
+var (
+	ErrWalletNotFound  = errors.New("no such wallet")
+	ErrWalletsNotFound = errors.New("no wallets")
+)
 
 type Postgres struct {
 	db  *pgx.Conn
@@ -102,7 +105,7 @@ func (p *Postgres) CreateWallet(ctx context.Context, id uuid.UUID, owner string,
 	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Created, &wallet.Updated)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNoRecords
+			return nil, ErrWalletNotFound
 		}
 
 		return nil, fmt.Errorf("row.Scan: %w", err)
@@ -131,7 +134,7 @@ func (p *Postgres) FetchWalletsList(ctx context.Context) ([]models.WalletData, e
 
 		err := rows.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Created, &wallet.Updated)
 		if err != nil {
-			return nil, fmt.Errorf("rows.Scan: %w", err)
+			return nil, fmt.Errorf("row.Scan: %w", err)
 		}
 
 		walletsList = append(walletsList, wallet)
@@ -140,6 +143,10 @@ func (p *Postgres) FetchWalletsList(ctx context.Context) ([]models.WalletData, e
 	err = rows.Err()
 	if err != nil {
 		return nil, fmt.Errorf("rows.Err: %w", err)
+	}
+
+	if len(walletsList) == 0 {
+		return nil, ErrWalletsNotFound
 	}
 
 	return walletsList, nil
@@ -159,7 +166,7 @@ func (p *Postgres) FetchWalletByID(ctx context.Context, id string) ([]models.Wal
 	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Created, &wallet.Updated)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNoRecords
+			return nil, ErrWalletNotFound
 		}
 
 		return nil, fmt.Errorf("row.Scan: %w", err)
@@ -183,7 +190,7 @@ func (p *Postgres) UpdateWallet(ctx context.Context, id string, owner string, ba
 	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Created, &wallet.Updated)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNoRecords
+			return nil, ErrWalletNotFound
 		}
 
 		return nil, fmt.Errorf("row.Scan: %w", err)
@@ -198,9 +205,13 @@ func (p *Postgres) DeleteWallet(ctx context.Context, id string) error {
 		WHERE wallet_id = $1;
 	`
 
-	_, err := p.db.Exec(ctx, query, id)
+	commandTag, err := p.db.Exec(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("db.Exec: %w", err)
+	}
+
+	if commandTag.RowsAffected() != 1 {
+		return ErrWalletNotFound
 	}
 
 	return nil

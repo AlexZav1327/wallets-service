@@ -15,7 +15,7 @@ import (
 type Server struct {
 	host    string
 	port    int
-	server  *http.Server
+	Server  *http.Server
 	service WalletService
 	log     *logrus.Entry
 }
@@ -47,7 +47,7 @@ func NewServer(host string, port int, service WalletService, log *logrus.Logger)
 		r.Delete("/wallets/{id}", h.delete)
 	})
 
-	server.server = &http.Server{
+	server.Server = &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", host, port),
 		Handler:           r,
 		ReadHeaderTimeout: 30 * time.Second,
@@ -63,13 +63,13 @@ func (s *Server) Run(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 
-		err := s.server.Shutdown(shutdownCtx)
+		err := s.Server.Shutdown(shutdownCtx)
 		if err != nil {
 			s.log.Warningf("server.Shutdown: %s", err)
 		}
 	}()
 
-	err := s.server.ListenAndServe()
+	err := s.Server.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("server.ListenAndServe: %w", err)
 	}
