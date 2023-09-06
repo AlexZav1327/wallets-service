@@ -19,5 +19,5 @@ up:
 down:
 	docker compose down
 
-test:
-	go test -v ./...
+test: up
+	go test -coverpkg=./... -v ./...

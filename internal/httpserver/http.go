@@ -21,10 +21,10 @@ type Server struct {
 }
 
 type WalletService interface {
-	Create(ctx context.Context, wallet models.WalletData) ([]models.WalletData, error)
-	GetList(ctx context.Context) ([]models.WalletData, error)
-	Get(ctx context.Context, id string) ([]models.WalletData, error)
-	Update(ctx context.Context, id string, wallet models.WalletData) ([]models.WalletData, error)
+	Create(ctx context.Context, wallet models.WalletInstance) (models.WalletInstance, error)
+	GetList(ctx context.Context) ([]models.WalletInstance, error)
+	Get(ctx context.Context, id string) (models.WalletInstance, error)
+	Update(ctx context.Context, wallet models.WalletInstance) (models.WalletInstance, error)
 	Delete(ctx context.Context, id string) error
 }
 

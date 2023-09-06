@@ -91,7 +91,18 @@ func (p *Postgres) Migrate(direction migrate.MigrationDirection) error {
 	return nil
 }
 
-func (p *Postgres) CreateWallet(ctx context.Context, id uuid.UUID, owner string, balance float32) ([]models.WalletData, error) { //nolint:lll
+func (p *Postgres) ResetTable(ctx context.Context) error {
+	query := `TRUNCATE TABLE wallet`
+
+	_, err := p.db.Exec(ctx, query)
+	if err != nil {
+		return fmt.Errorf("db.Exec: %w", err)
+	}
+
+	return nil
+}
+
+func (p *Postgres) CreateWallet(ctx context.Context, id uuid.UUID, owner string, balance float32) (models.WalletInstance, error) { //nolint:lll
 	query := `
 		INSERT INTO wallet (wallet_id, owner, balance) 
 		VALUES ($1, $2, $3)
@@ -100,21 +111,21 @@ func (p *Postgres) CreateWallet(ctx context.Context, id uuid.UUID, owner string,
 
 	row := p.db.QueryRow(ctx, query, id, owner, balance)
 
-	var wallet models.WalletData
+	var wallet models.WalletInstance
 
 	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Created, &wallet.Updated)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrWalletNotFound
+			return models.WalletInstance{}, ErrWalletNotFound
 		}
 
-		return nil, fmt.Errorf("row.Scan: %w", err)
+		return models.WalletInstance{}, fmt.Errorf("row.Scan: %w", err)
 	}
 
-	return []models.WalletData{wallet}, nil
+	return wallet, nil
 }
 
-func (p *Postgres) FetchWalletsList(ctx context.Context) ([]models.WalletData, error) {
+func (p *Postgres) FetchWalletsList(ctx context.Context) ([]models.WalletInstance, error) {
 	query := `
 		SELECT wallet_id, owner, balance, created_at, updated_at 
 		FROM wallet;
@@ -127,10 +138,10 @@ func (p *Postgres) FetchWalletsList(ctx context.Context) ([]models.WalletData, e
 
 	defer rows.Close()
 
-	var walletsList []models.WalletData
+	var walletsList []models.WalletInstance
 
 	for rows.Next() {
-		var wallet models.WalletData
+		var wallet models.WalletInstance
 
 		err := rows.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Created, &wallet.Updated)
 		if err != nil {
@@ -152,7 +163,7 @@ func (p *Postgres) FetchWalletsList(ctx context.Context) ([]models.WalletData, e
 	return walletsList, nil
 }
 
-func (p *Postgres) FetchWalletByID(ctx context.Context, id string) ([]models.WalletData, error) {
+func (p *Postgres) FetchWalletByID(ctx context.Context, id string) (models.WalletInstance, error) {
 	query := `
 		SELECT wallet_id, owner, balance, created_at, updated_at 
 		FROM wallet
@@ -161,21 +172,21 @@ func (p *Postgres) FetchWalletByID(ctx context.Context, id string) ([]models.Wal
 
 	row := p.db.QueryRow(ctx, query, id)
 
-	var wallet models.WalletData
+	var wallet models.WalletInstance
 
 	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Created, &wallet.Updated)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrWalletNotFound
+			return models.WalletInstance{}, ErrWalletNotFound
 		}
 
-		return nil, fmt.Errorf("row.Scan: %w", err)
+		return models.WalletInstance{}, fmt.Errorf("row.Scan: %w", err)
 	}
 
-	return []models.WalletData{wallet}, nil
+	return wallet, nil
 }
 
-func (p *Postgres) UpdateWallet(ctx context.Context, id string, owner string, balance float32) ([]models.WalletData, error) { //nolint:lll
+func (p *Postgres) UpdateWallet(ctx context.Context, id string, owner string, balance float32) (models.WalletInstance, error) { //nolint:lll
 	query := `
 		UPDATE wallet 
 		SET owner = $2, balance = $3, updated_at = $4 
@@ -185,18 +196,18 @@ func (p *Postgres) UpdateWallet(ctx context.Context, id string, owner string, ba
 
 	row := p.db.QueryRow(ctx, query, id, owner, balance, time.Now())
 
-	var wallet models.WalletData
+	var wallet models.WalletInstance
 
 	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Created, &wallet.Updated)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrWalletNotFound
+			return models.WalletInstance{}, ErrWalletNotFound
 		}
 
-		return nil, fmt.Errorf("row.Scan: %w", err)
+		return models.WalletInstance{}, fmt.Errorf("row.Scan: %w", err)
 	}
 
-	return []models.WalletData{wallet}, nil
+	return wallet, nil
 }
 
 func (p *Postgres) DeleteWallet(ctx context.Context, id string) error {

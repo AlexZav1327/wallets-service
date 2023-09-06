@@ -2,12 +2,11 @@ package httpserver
 
 import (
 	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"strings"
 
 	"github.com/AlexZav1327/service/models"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -24,22 +23,19 @@ func NewHandler(service WalletService, log *logrus.Logger) *Handler {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	wallet := models.WalletData{}
+	wallet := models.WalletInstance{}
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil && !errors.Is(err, io.EOF) {
-		h.log.Warningf("io.ReadAll: %s", err)
-	}
+	wallet.WalletID = uuid.New()
 
-	err = json.Unmarshal(body, &wallet)
+	err := json.NewDecoder(r.Body).Decode(&wallet)
 	if err != nil {
-		h.log.Warningf("json.Unmarshal: %s", err)
+		h.log.Warningf("json.NewDecoder.Decode: %s", err)
 		w.WriteHeader(http.StatusBadRequest)
 
 		return
 	}
 
-	var createdWallet []models.WalletData
+	var createdWallet models.WalletInstance
 
 	createdWallet, err = h.service.Create(r.Context(), wallet)
 	if err != nil {
@@ -97,24 +93,25 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	pathParts := strings.Split(path, "/")
 	id := pathParts[3]
 
-	wallet := models.WalletData{}
+	wallet, err := h.service.Get(r.Context(), id)
+	if err != nil {
+		h.log.Warningf("service.Get: %s", err)
+		w.WriteHeader(http.StatusNotFound)
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil && !errors.Is(err, io.EOF) {
-		h.log.Warningf("io.ReadAll: %s", err)
+		return
 	}
 
-	err = json.Unmarshal(body, &wallet)
+	err = json.NewDecoder(r.Body).Decode(&wallet)
 	if err != nil {
-		h.log.Warningf("json.Unmarshal: %s", err)
+		h.log.Warningf("json.NewDecoder.Decode: %s", err)
 		w.WriteHeader(http.StatusBadRequest)
 
 		return
 	}
 
-	var updatedWallet []models.WalletData
+	var updatedWallet models.WalletInstance
 
-	updatedWallet, err = h.service.Update(r.Context(), id, wallet)
+	updatedWallet, err = h.service.Update(r.Context(), wallet)
 	if err != nil {
 		h.log.Warningf("service.Update: %s", err)
 		w.WriteHeader(http.StatusNotFound)

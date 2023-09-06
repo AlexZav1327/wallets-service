@@ -1,15 +1,11 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
-	"os"
-	"os/signal"
-	"strings"
-	"syscall"
+	"strconv"
 	"testing"
 	"time"
 
@@ -17,175 +13,211 @@ import (
 	"github.com/AlexZav1327/service/internal/postgres"
 	"github.com/AlexZav1327/service/internal/service"
 	"github.com/AlexZav1327/service/models"
+	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	migrate "github.com/rubenv/sql-migrate"
 	"github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
 const (
-	port                 = ":5005"
-	testURL              = "http://localhost" + port
+	port                 = 5005
 	createWalletEndpoint = "/api/v1/create"
 	walletEndpoint       = "/api/v1/wallets"
+	dsn                  = "user=user password=1234 host=localhost port=5432 dbname=postgres sslmode=disable"
 )
 
-func mainThread(t *testing.T) {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-	defer cancel()
+var testURL = "http://localhost" + ":" + strconv.Itoa(port)
 
-	logger := logrus.StandardLogger()
-	dsn := os.Getenv("DSN")
-
-	pg, err := postgres.ConnectDB(ctx, logger, dsn)
-	require.NoError(t, err)
-
-	err = pg.Migrate(migrate.Up)
-	require.NoError(t, err)
-
-	webServer := httpserver.NewServer("", 5005, service.NewWallet(pg, logger), logger)
-
-	err = webServer.Run(ctx)
-	require.NoError(t, err)
-
-	err = webServer.Server.Shutdown(ctx)
-	require.NoError(t, err)
+type IntegrationTestSuite struct {
+	suite.Suite
+	pg        *postgres.Postgres
+	webServer *httpserver.Server
+	service   *service.Wallet
+	models.WalletInstance
+	models.ChangeWalletData
+	models.WrongWalletData
 }
 
-func TestCRUD(t *testing.T) {
+func (s *IntegrationTestSuite) SetupSuite() {
+	ctx := context.Background()
+	logger := logrus.StandardLogger()
+
+	var err error
+
+	s.pg, err = postgres.ConnectDB(ctx, logger, dsn)
+	s.Require().NoError(err)
+
+	err = s.pg.Migrate(migrate.Up)
+	s.Require().NoError(err)
+
+	s.service = service.NewWallet(s.pg, logger)
+
+	s.webServer = httpserver.NewServer("", port, s.service, logger)
+
 	go func() {
-		mainThread(t)
+		_ = s.webServer.Run(ctx)
 	}()
 
 	time.Sleep(250 * time.Millisecond)
-
-	t.Run("create wallet normal cases", func(t *testing.T) {
-		creationStatus, createdWallet := sendRequest(testURL+createWalletEndpoint, `{"owner":"John","balance":100.0}`, http.MethodPost, t)
-
-		require.Equal(t, "John", *createdWallet[0].Owner, "they should be equal")
-		require.Equal(t, float32(100.0), *createdWallet[0].Balance, "they should be equal")
-		require.Equal(t, http.StatusCreated, creationStatus, "they should be equal")
-	})
-
-	t.Run("create wallet invalid request data", func(t *testing.T) {
-		creationStatus, _ := sendRequest(testURL+createWalletEndpoint, `"owner":Alex,"balance":"200.0"`, http.MethodPost, t)
-
-		require.Equal(t, http.StatusBadRequest, creationStatus, "they should be equal")
-
-		creationStatus, _ = sendRequest(testURL+createWalletEndpoint, `"owner":"Alex","balance":"200.0"`, http.MethodPost, t)
-
-		require.Equal(t, http.StatusBadRequest, creationStatus, "they should be equal")
-
-	})
-
-	t.Run("update wallet normal case", func(t *testing.T) {
-		createdWallet := createValidWallet(t)
-		walletIdEndpoint := "/" + createdWallet.WalletID.String()
-
-		updateStatus, updatedWallet := sendRequest(testURL+walletEndpoint+walletIdEndpoint, `{"balance":200.5}`, http.MethodPatch, t)
-
-		require.Equal(t, float32(200.5), *updatedWallet[0].Balance, "they should be equal")
-		require.Equal(t, http.StatusOK, updateStatus, "they should be equal")
-	})
-
-	t.Run("update wallet invalid request data", func(t *testing.T) {
-		createdWallet := createValidWallet(t)
-		walletIdEndpoint := "/" + createdWallet.WalletID.String()
-
-		updateStatus, _ := sendRequest(testURL+walletEndpoint+walletIdEndpoint, `{"balance": "201"}`, http.MethodPatch, t)
-
-		require.Equal(t, http.StatusBadRequest, updateStatus)
-	})
-
-	t.Run("update wallet invalid wallet ID", func(t *testing.T) {
-		updateStatus, _ := sendRequest(testURL+walletEndpoint+"/01234567-0123-0123-0123-0123456789ab", `{"balance": 201}`, http.MethodPatch, t)
-
-		require.Equal(t, http.StatusNotFound, updateStatus)
-	})
-
-	t.Run("get wallet normal cases", func(t *testing.T) {
-		createdWallet := createValidWallet(t)
-		walletIdEndpoint := "/" + createdWallet.WalletID.String()
-
-		gettingStatus, receivedWallet := sendRequest(testURL+walletEndpoint+walletIdEndpoint, "", http.MethodGet, t)
-
-		require.Equal(t, *receivedWallet[0].Owner, *createdWallet.Owner, "they should be equal")
-		require.Equal(t, *receivedWallet[0].Balance, *createdWallet.Balance, "they should be equal")
-		require.Equal(t, http.StatusOK, gettingStatus, "they should be equal")
-	})
-
-	t.Run("get wallet invalid wallet ID", func(t *testing.T) {
-		gettingStatus, _ := sendRequest(testURL+walletEndpoint+"/01234567-0123-0123-0123-0123456789ab", "", http.MethodGet, t)
-
-		require.Equal(t, http.StatusNotFound, gettingStatus)
-	})
-
-	t.Run("delete wallet normal case", func(t *testing.T) {
-		createdWallet := createValidWallet(t)
-		walletIdEndpoint := "/" + createdWallet.WalletID.String()
-
-		deletionStatus, _ := sendRequest(testURL+walletEndpoint+walletIdEndpoint, "", http.MethodDelete, t)
-
-		require.Equal(t, http.StatusNoContent, deletionStatus, "they should be equal")
-	})
-
-	t.Run("delete wallet invalid wallet ID", func(t *testing.T) {
-		deletionStatus, _ := sendRequest(testURL+walletEndpoint+"/01234567-0123-0123-0123-0123456789ab", "", http.MethodDelete, t)
-
-		require.Equal(t, http.StatusNotFound, deletionStatus, "they should be equal")
-	})
-
-	groomDB(t)
 }
 
-func sendRequest(url string, data string, method string, t *testing.T) (int, []models.WalletData) {
-	request, err := http.NewRequest(method, url, strings.NewReader(data))
-	require.NoError(t, err)
-
-	request.Header.Set("Content-Type", "application/json")
-
-	response, err := http.DefaultClient.Do(request)
-	require.NoError(t, err)
-
-	respStatus := response.StatusCode
-
-	if respStatus == http.StatusNoContent || respStatus == http.StatusNotFound {
-		return respStatus, nil
+func (s *IntegrationTestSuite) SetupTest() {
+	s.WalletInstance = models.WalletInstance{
+		WalletID: uuid.MustParse("01234567-0123-0123-0123-0123456789a5"),
+		Owner:    "Alex",
+		Balance:  6666,
+		Created:  time.Now(),
+		Updated:  time.Now(),
 	}
 
-	body, err := io.ReadAll(response.Body)
-	if err != nil && !errors.Is(err, io.EOF) {
-		require.NoError(t, err)
+	s.ChangeWalletData = models.ChangeWalletData{
+		WalletID: uuid.MustParse("01234567-0123-0123-0123-0123456789a5"),
+		Owner:    "Liza",
+		Balance:  7569,
 	}
 
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		require.NoError(t, err)
-	}(request.Body)
-
-	var wallet []models.WalletData
-
-	err = json.Unmarshal(body, &wallet)
-
-	if respStatus == http.StatusBadRequest {
-		return respStatus, nil
+	s.WrongWalletData = models.WrongWalletData{
+		WalletID: uuid.MustParse("01234567-0123-0123-0123-0123456789a5"),
+		Balance:  "1050",
 	}
-
-	require.NoError(t, err)
-
-	return respStatus, wallet
 }
 
-func createValidWallet(t *testing.T) models.WalletData {
-	_, createdWallet := sendRequest(testURL+createWalletEndpoint, `{"owner":"James","balance":300.0}`, http.MethodPost, t)
+func (s *IntegrationTestSuite) TearDownSuite() {
+	ctx := context.Background()
 
-	return createdWallet[0]
+	var err error
+
+	err = s.pg.ResetTable(ctx)
+	s.Require().NoError(err)
 }
 
-func groomDB(t *testing.T) {
-	_, walletsList := sendRequest(testURL+walletEndpoint, "", http.MethodGet, t)
+func TestIntegrationTestSuite(t *testing.T) {
+	suite.Run(t, new(IntegrationTestSuite))
+}
 
-	for i := range walletsList {
-		_, _ = sendRequest(testURL+walletEndpoint+"/"+walletsList[i].WalletID.String(), "", http.MethodDelete, t)
+func (s *IntegrationTestSuite) sendRequest(ctx context.Context, method, endpoint string, body interface{}, dest interface{}) *http.Response {
+	s.T().Helper()
+
+	reqBody, err := json.Marshal(body)
+	s.Require().NoError(err)
+
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(reqBody))
+	s.Require().NoError(err)
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	s.Require().NoError(err)
+
+	defer func() {
+		err = resp.Body.Close()
+		s.Require().NoError(err)
+	}()
+
+	if dest != nil {
+		err = json.NewDecoder(resp.Body).Decode(&dest)
+		s.Require().NoError(err)
 	}
+
+	return resp
+}
+
+func (s *IntegrationTestSuite) TestWalletCRUD() {
+	s.Run("create wallet normal case", func() {
+		ctx := context.Background()
+
+		var respData models.WalletInstance
+
+		resp := s.sendRequest(ctx, http.MethodPost, testURL+createWalletEndpoint, s.WalletInstance, &respData)
+
+		s.Require().Equal(http.StatusCreated, resp.StatusCode)
+		s.Require().Equal(s.WalletInstance.Owner, respData.Owner)
+		s.Require().Equal(s.WalletInstance.Balance, respData.Balance)
+	})
+
+	s.Run("create wallet invalid wallet balance", func() {
+		ctx := context.Background()
+		resp := s.sendRequest(ctx, http.MethodPost, testURL+createWalletEndpoint, s.WrongWalletData, nil)
+
+		s.Require().Equal(http.StatusBadRequest, resp.StatusCode)
+	})
+
+	s.Run("get wallet normal case", func() {
+		ctx := context.Background()
+
+		var respData models.WalletInstance
+
+		walletIdEndpoint := "/" + s.WalletInstance.WalletID.String()
+		resp := s.sendRequest(ctx, http.MethodGet, testURL+walletEndpoint+walletIdEndpoint, s.WalletInstance, &respData)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		s.Require().Equal(s.WalletInstance.Owner, respData.Owner)
+		s.Require().Equal(s.WalletInstance.Balance, respData.Balance)
+	})
+
+	s.Run("get a list of wallets normal case", func() {
+		ctx := context.Background()
+
+		var respData []models.WalletInstance
+
+		resp := s.sendRequest(ctx, http.MethodGet, testURL+walletEndpoint, s.WalletInstance, &respData)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+	})
+
+	s.Run("get wallet invalid wallet ID", func() {
+		ctx := context.Background()
+		walletIdEndpoint := "/" + uuid.New().String()
+		resp := s.sendRequest(ctx, http.MethodGet, testURL+walletEndpoint+walletIdEndpoint, s.WalletInstance, nil)
+
+		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
+	})
+
+	s.Run("update wallet normal case", func() {
+		ctx := context.Background()
+
+		var respData models.WalletInstance
+
+		walletIdEndpoint := "/" + s.ChangeWalletData.WalletID.String()
+		resp := s.sendRequest(ctx, http.MethodPatch, testURL+walletEndpoint+walletIdEndpoint, s.ChangeWalletData, &respData)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		s.Require().Equal(s.ChangeWalletData.Owner, respData.Owner)
+		s.Require().Equal(s.ChangeWalletData.Balance, respData.Balance)
+	})
+
+	s.Run("update wallet invalid wallet ID", func() {
+		ctx := context.Background()
+
+		walletIdEndpoint := "/" + uuid.New().String()
+		resp := s.sendRequest(ctx, http.MethodPatch, testURL+walletEndpoint+walletIdEndpoint, s.ChangeWalletData, nil)
+
+		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
+	})
+
+	s.Run("update wallet invalid wallet balance", func() {
+		ctx := context.Background()
+
+		walletIdEndpoint := "/" + s.WrongWalletData.WalletID.String()
+		resp := s.sendRequest(ctx, http.MethodPatch, testURL+walletEndpoint+walletIdEndpoint, s.WrongWalletData, nil)
+
+		s.Require().Equal(http.StatusBadRequest, resp.StatusCode)
+	})
+
+	s.Run("delete wallet normal case", func() {
+		ctx := context.Background()
+		walletIdEndpoint := "/" + s.WalletInstance.WalletID.String()
+		resp := s.sendRequest(ctx, http.MethodDelete, testURL+walletEndpoint+walletIdEndpoint, s.WalletInstance, nil)
+
+		s.Require().Equal(http.StatusNoContent, resp.StatusCode)
+	})
+
+	s.Run("delete wallet invalid wallet ID", func() {
+		ctx := context.Background()
+		walletIdEndpoint := "/" + uuid.New().String()
+		resp := s.sendRequest(ctx, http.MethodDelete, testURL+walletEndpoint+walletIdEndpoint, s.WalletInstance, nil)
+
+		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
+	})
 }
