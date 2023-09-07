@@ -102,18 +102,18 @@ func (p *Postgres) ResetTable(ctx context.Context) error {
 	return nil
 }
 
-func (p *Postgres) CreateWallet(ctx context.Context, id uuid.UUID, owner string, balance float32) (models.WalletInstance, error) { //nolint:lll
+func (p *Postgres) CreateWallet(ctx context.Context, id uuid.UUID, owner string, balance float32, currency string) (models.WalletInstance, error) { //nolint:lll
 	query := `
-		INSERT INTO wallet (wallet_id, owner, balance) 
-		VALUES ($1, $2, $3)
-		RETURNING wallet_id, owner, balance, created_at, updated_at;
+		INSERT INTO wallet (wallet_id, owner, balance, currency) 
+		VALUES ($1, $2, $3, $4)
+		RETURNING wallet_id, owner, balance, currency, created_at, updated_at;
 	`
 
-	row := p.db.QueryRow(ctx, query, id, owner, balance)
+	row := p.db.QueryRow(ctx, query, id, owner, balance, currency)
 
 	var wallet models.WalletInstance
 
-	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Created, &wallet.Updated)
+	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Currency, &wallet.Created, &wallet.Updated)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.WalletInstance{}, ErrWalletNotFound
@@ -127,7 +127,7 @@ func (p *Postgres) CreateWallet(ctx context.Context, id uuid.UUID, owner string,
 
 func (p *Postgres) FetchWalletsList(ctx context.Context) ([]models.WalletInstance, error) {
 	query := `
-		SELECT wallet_id, owner, balance, created_at, updated_at 
+		SELECT wallet_id, owner, balance, currency, created_at, updated_at 
 		FROM wallet;
 	`
 
@@ -143,7 +143,7 @@ func (p *Postgres) FetchWalletsList(ctx context.Context) ([]models.WalletInstanc
 	for rows.Next() {
 		var wallet models.WalletInstance
 
-		err := rows.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Created, &wallet.Updated)
+		err := rows.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Currency, &wallet.Created, &wallet.Updated)
 		if err != nil {
 			return nil, fmt.Errorf("row.Scan: %w", err)
 		}
@@ -165,7 +165,7 @@ func (p *Postgres) FetchWalletsList(ctx context.Context) ([]models.WalletInstanc
 
 func (p *Postgres) FetchWalletByID(ctx context.Context, id string) (models.WalletInstance, error) {
 	query := `
-		SELECT wallet_id, owner, balance, created_at, updated_at 
+		SELECT wallet_id, owner, balance, currency, created_at, updated_at 
 		FROM wallet
 		WHERE wallet_id = $1;
 	`
@@ -174,7 +174,7 @@ func (p *Postgres) FetchWalletByID(ctx context.Context, id string) (models.Walle
 
 	var wallet models.WalletInstance
 
-	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Created, &wallet.Updated)
+	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Currency, &wallet.Created, &wallet.Updated)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.WalletInstance{}, ErrWalletNotFound
@@ -189,16 +189,16 @@ func (p *Postgres) FetchWalletByID(ctx context.Context, id string) (models.Walle
 func (p *Postgres) UpdateWallet(ctx context.Context, id string, owner string, balance float32) (models.WalletInstance, error) { //nolint:lll
 	query := `
 		UPDATE wallet 
-		SET owner = $2, balance = $3, updated_at = $4 
+		SET owner = $2, balance = $3, updated_at = $4
 		WHERE wallet_id = $1
-		RETURNING wallet_id, owner, balance, created_at, updated_at;
+		RETURNING wallet_id, owner, balance, currency, created_at, updated_at;
 	`
 
 	row := p.db.QueryRow(ctx, query, id, owner, balance, time.Now())
 
 	var wallet models.WalletInstance
 
-	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Created, &wallet.Updated)
+	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Currency, &wallet.Created, &wallet.Updated)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.WalletInstance{}, ErrWalletNotFound

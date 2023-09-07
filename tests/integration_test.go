@@ -37,6 +37,7 @@ type IntegrationTestSuite struct {
 	models.WalletInstance
 	models.ChangeWalletData
 	models.WrongWalletData
+	models.Overdraft
 }
 
 func (s *IntegrationTestSuite) SetupSuite() {
@@ -66,20 +67,25 @@ func (s *IntegrationTestSuite) SetupTest() {
 	s.WalletInstance = models.WalletInstance{
 		WalletID: uuid.MustParse("01234567-0123-0123-0123-0123456789a5"),
 		Owner:    "Alex",
-		Balance:  6666,
+		Balance:  10000.57,
+		Currency: "USD",
 		Created:  time.Now(),
 		Updated:  time.Now(),
 	}
 
 	s.ChangeWalletData = models.ChangeWalletData{
 		WalletID: uuid.MustParse("01234567-0123-0123-0123-0123456789a5"),
-		Owner:    "Liza",
-		Balance:  7569,
+		Balance:  40000.6,
 	}
 
 	s.WrongWalletData = models.WrongWalletData{
 		WalletID: uuid.MustParse("01234567-0123-0123-0123-0123456789a5"),
 		Balance:  "1050",
+	}
+
+	s.Overdraft = models.Overdraft{
+		WalletID: uuid.MustParse("01234567-0123-0123-0123-0123456789a5"),
+		Balance:  -60000.5,
 	}
 }
 
@@ -134,13 +140,21 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 		s.Require().Equal(http.StatusCreated, resp.StatusCode)
 		s.Require().Equal(s.WalletInstance.Owner, respData.Owner)
 		s.Require().Equal(s.WalletInstance.Balance, respData.Balance)
+		s.Require().Equal(s.WalletInstance.Currency, respData.Currency)
 	})
 
-	s.Run("create wallet invalid wallet balance", func() {
+	s.Run("create wallet invalid wallet data", func() {
 		ctx := context.Background()
 		resp := s.sendRequest(ctx, http.MethodPost, testURL+createWalletEndpoint, s.WrongWalletData, nil)
 
 		s.Require().Equal(http.StatusBadRequest, resp.StatusCode)
+	})
+
+	s.Run("create wallet overdraft", func() {
+		ctx := context.Background()
+		resp := s.sendRequest(ctx, http.MethodPost, testURL+createWalletEndpoint, s.Overdraft, nil)
+
+		s.Require().Equal(http.StatusUnprocessableEntity, resp.StatusCode)
 	})
 
 	s.Run("get wallet normal case", func() {
@@ -183,8 +197,7 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 		resp := s.sendRequest(ctx, http.MethodPatch, testURL+walletEndpoint+walletIdEndpoint, s.ChangeWalletData, &respData)
 
 		s.Require().Equal(http.StatusOK, resp.StatusCode)
-		s.Require().Equal(s.ChangeWalletData.Owner, respData.Owner)
-		s.Require().Equal(s.ChangeWalletData.Balance, respData.Balance)
+		s.Require().Equal(s.WalletInstance.Balance+s.ChangeWalletData.Balance, respData.Balance)
 	})
 
 	s.Run("update wallet invalid wallet ID", func() {
@@ -196,13 +209,20 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
 	})
 
-	s.Run("update wallet invalid wallet balance", func() {
+	s.Run("update wallet invalid wallet data", func() {
 		ctx := context.Background()
 
 		walletIdEndpoint := "/" + s.WrongWalletData.WalletID.String()
 		resp := s.sendRequest(ctx, http.MethodPatch, testURL+walletEndpoint+walletIdEndpoint, s.WrongWalletData, nil)
 
 		s.Require().Equal(http.StatusBadRequest, resp.StatusCode)
+	})
+
+	s.Run("update wallet overdraft", func() {
+		ctx := context.Background()
+		resp := s.sendRequest(ctx, http.MethodPost, testURL+createWalletEndpoint, s.Overdraft, nil)
+
+		s.Require().Equal(http.StatusUnprocessableEntity, resp.StatusCode)
 	})
 
 	s.Run("delete wallet normal case", func() {
