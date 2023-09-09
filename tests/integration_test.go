@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AlexZav1327/service/internal/httpserver"
 	"github.com/AlexZav1327/service/internal/postgres"
-	"github.com/AlexZav1327/service/internal/service"
+	walletserver "github.com/AlexZav1327/service/internal/wallet-server"
+	walletservice "github.com/AlexZav1327/service/internal/wallet-service"
 	"github.com/AlexZav1327/service/models"
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -31,9 +31,9 @@ var testURL = "http://localhost" + ":" + strconv.Itoa(port)
 
 type IntegrationTestSuite struct {
 	suite.Suite
-	pg        *postgres.Postgres
-	webServer *httpserver.Server
-	service   *service.Wallet
+	pg            *postgres.Postgres
+	server        *walletserver.Server
+	walletService *walletservice.Service
 	models.WalletInstance
 	models.ChangeWalletData
 	models.WrongWalletData
@@ -52,12 +52,12 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	err = s.pg.Migrate(migrate.Up)
 	s.Require().NoError(err)
 
-	s.service = service.NewWallet(s.pg, logger)
+	s.walletService = walletservice.New(s.pg, logger)
 
-	s.webServer = httpserver.NewServer("", port, s.service, logger)
+	s.server = walletserver.New("", port, s.walletService, logger)
 
 	go func() {
-		_ = s.webServer.Run(ctx)
+		_ = s.server.Run(ctx)
 	}()
 
 	time.Sleep(250 * time.Millisecond)

@@ -4,24 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"embed"
-	"errors"
 	"fmt"
-	"time"
 
-	"github.com/AlexZav1327/service/models"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	migrate "github.com/rubenv/sql-migrate"
 	"github.com/sirupsen/logrus"
 )
 
+const resetTableQuery = `
+	TRUNCATE TABLE wallet
+`
+
 //go:embed migrations
 var migrations embed.FS
-
-var (
-	ErrWalletNotFound  = errors.New("no such wallet")
-	ErrWalletsNotFound = errors.New("no wallets")
-)
 
 type Postgres struct {
 	db  *pgx.Conn
@@ -92,137 +87,9 @@ func (p *Postgres) Migrate(direction migrate.MigrationDirection) error {
 }
 
 func (p *Postgres) ResetTable(ctx context.Context) error {
-	query := `TRUNCATE TABLE wallet`
-
-	_, err := p.db.Exec(ctx, query)
+	_, err := p.db.Exec(ctx, resetTableQuery)
 	if err != nil {
 		return fmt.Errorf("db.Exec: %w", err)
-	}
-
-	return nil
-}
-
-func (p *Postgres) CreateWallet(ctx context.Context, id uuid.UUID, owner string, balance float32, currency string) (models.WalletInstance, error) { //nolint:lll
-	query := `
-		INSERT INTO wallet (wallet_id, owner, balance, currency) 
-		VALUES ($1, $2, $3, $4)
-		RETURNING wallet_id, owner, balance, currency, created_at, updated_at;
-	`
-
-	row := p.db.QueryRow(ctx, query, id, owner, balance, currency)
-
-	var wallet models.WalletInstance
-
-	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Currency, &wallet.Created, &wallet.Updated)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return models.WalletInstance{}, ErrWalletNotFound
-		}
-
-		return models.WalletInstance{}, fmt.Errorf("row.Scan: %w", err)
-	}
-
-	return wallet, nil
-}
-
-func (p *Postgres) FetchWalletsList(ctx context.Context) ([]models.WalletInstance, error) {
-	query := `
-		SELECT wallet_id, owner, balance, currency, created_at, updated_at 
-		FROM wallet;
-	`
-
-	rows, err := p.db.Query(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("db.Query: %w", err)
-	}
-
-	defer rows.Close()
-
-	var walletsList []models.WalletInstance
-
-	for rows.Next() {
-		var wallet models.WalletInstance
-
-		err := rows.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Currency, &wallet.Created, &wallet.Updated)
-		if err != nil {
-			return nil, fmt.Errorf("row.Scan: %w", err)
-		}
-
-		walletsList = append(walletsList, wallet)
-	}
-
-	err = rows.Err()
-	if err != nil {
-		return nil, fmt.Errorf("rows.Err: %w", err)
-	}
-
-	if len(walletsList) == 0 {
-		return nil, ErrWalletsNotFound
-	}
-
-	return walletsList, nil
-}
-
-func (p *Postgres) FetchWalletByID(ctx context.Context, id string) (models.WalletInstance, error) {
-	query := `
-		SELECT wallet_id, owner, balance, currency, created_at, updated_at 
-		FROM wallet
-		WHERE wallet_id = $1;
-	`
-
-	row := p.db.QueryRow(ctx, query, id)
-
-	var wallet models.WalletInstance
-
-	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Currency, &wallet.Created, &wallet.Updated)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return models.WalletInstance{}, ErrWalletNotFound
-		}
-
-		return models.WalletInstance{}, fmt.Errorf("row.Scan: %w", err)
-	}
-
-	return wallet, nil
-}
-
-func (p *Postgres) UpdateWallet(ctx context.Context, id string, owner string, balance float32) (models.WalletInstance, error) { //nolint:lll
-	query := `
-		UPDATE wallet 
-		SET owner = $2, balance = $3, updated_at = $4
-		WHERE wallet_id = $1
-		RETURNING wallet_id, owner, balance, currency, created_at, updated_at;
-	`
-
-	row := p.db.QueryRow(ctx, query, id, owner, balance, time.Now())
-
-	var wallet models.WalletInstance
-
-	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Balance, &wallet.Currency, &wallet.Created, &wallet.Updated)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return models.WalletInstance{}, ErrWalletNotFound
-		}
-
-		return models.WalletInstance{}, fmt.Errorf("row.Scan: %w", err)
-	}
-
-	return wallet, nil
-}
-
-func (p *Postgres) DeleteWallet(ctx context.Context, id string) error {
-	query := `
-		DELETE FROM wallet 
-		WHERE wallet_id = $1;
-	`
-
-	commandTag, err := p.db.Exec(ctx, query, id)
-	if err != nil {
-		return fmt.Errorf("db.Exec: %w", err)
-	}
-
-	if commandTag.RowsAffected() != 1 {
-		return ErrWalletNotFound
 	}
 
 	return nil

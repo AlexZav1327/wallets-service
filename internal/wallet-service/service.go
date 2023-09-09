@@ -1,4 +1,4 @@
-package service
+package walletservice
 
 import (
 	"context"
@@ -18,27 +18,27 @@ var (
 	ErrUnchangeableCurrency = errors.New("currency is unchangeable")
 )
 
-type Wallet struct {
+type Service struct {
 	pg  WalletStore
 	log *logrus.Entry
 }
 
 type WalletStore interface {
 	CreateWallet(ctx context.Context, id uuid.UUID, owner string, balance float32, currency string) (models.WalletInstance, error) //nolint:lll
-	FetchWalletsList(ctx context.Context) ([]models.WalletInstance, error)
-	FetchWalletByID(ctx context.Context, id string) (models.WalletInstance, error)
+	GetWalletsList(ctx context.Context) ([]models.WalletInstance, error)
+	GetWallet(ctx context.Context, id string) (models.WalletInstance, error)
 	UpdateWallet(ctx context.Context, id string, owner string, balance float32) (models.WalletInstance, error)
 	DeleteWallet(ctx context.Context, id string) error
 }
 
-func NewWallet(pg WalletStore, log *logrus.Logger) *Wallet {
-	return &Wallet{
+func New(pg WalletStore, log *logrus.Logger) *Service {
+	return &Service{
 		pg:  pg,
 		log: log.WithField("module", "service"),
 	}
 }
 
-func (w *Wallet) Create(ctx context.Context, wallet models.WalletInstance) (models.WalletInstance, error) {
+func (s *Service) CreateWallet(ctx context.Context, wallet models.WalletInstance) (models.WalletInstance, error) { //nolint:lll
 	if utf8.RuneCountInString(wallet.Owner) < 3 || utf8.RuneCountInString(wallet.Owner) > 50 {
 		return models.WalletInstance{}, ErrWrongOwnerName
 	}
@@ -51,7 +51,7 @@ func (w *Wallet) Create(ctx context.Context, wallet models.WalletInstance) (mode
 		return models.WalletInstance{}, ErrWrongCurrency
 	}
 
-	createdWallet, err := w.pg.CreateWallet(ctx, wallet.WalletID, wallet.Owner, wallet.Balance, wallet.Currency)
+	createdWallet, err := s.pg.CreateWallet(ctx, wallet.WalletID, wallet.Owner, wallet.Balance, wallet.Currency)
 	if err != nil {
 		return models.WalletInstance{}, fmt.Errorf("pg.CreateWallet: %w", err)
 	}
@@ -59,8 +59,8 @@ func (w *Wallet) Create(ctx context.Context, wallet models.WalletInstance) (mode
 	return createdWallet, nil
 }
 
-func (w *Wallet) GetList(ctx context.Context) ([]models.WalletInstance, error) {
-	walletsList, err := w.pg.FetchWalletsList(ctx)
+func (s *Service) GetWalletsList(ctx context.Context) ([]models.WalletInstance, error) {
+	walletsList, err := s.pg.GetWalletsList(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("FetchWalletsList: %w", err)
 	}
@@ -68,8 +68,8 @@ func (w *Wallet) GetList(ctx context.Context) ([]models.WalletInstance, error) {
 	return walletsList, nil
 }
 
-func (w *Wallet) Get(ctx context.Context, id string) (models.WalletInstance, error) {
-	wallet, err := w.pg.FetchWalletByID(ctx, id)
+func (s *Service) GetWallet(ctx context.Context, id string) (models.WalletInstance, error) {
+	wallet, err := s.pg.GetWallet(ctx, id)
 	if err != nil {
 		return models.WalletInstance{}, fmt.Errorf("pg.FetchWalletByID: %w", err)
 	}
@@ -77,8 +77,8 @@ func (w *Wallet) Get(ctx context.Context, id string) (models.WalletInstance, err
 	return wallet, nil
 }
 
-func (w *Wallet) Update(ctx context.Context, wallet models.WalletInstance) (models.WalletInstance, error) {
-	currentWallet, err := w.pg.FetchWalletByID(ctx, wallet.WalletID.String())
+func (s *Service) UpdateWallet(ctx context.Context, wallet models.WalletInstance) (models.WalletInstance, error) { //nolint:lll
+	currentWallet, err := s.pg.GetWallet(ctx, wallet.WalletID.String())
 	if err != nil {
 		return models.WalletInstance{}, fmt.Errorf("pg.FetchWalletByID: %w", err)
 	}
@@ -101,7 +101,7 @@ func (w *Wallet) Update(ctx context.Context, wallet models.WalletInstance) (mode
 	owner := wallet.Owner
 	balance := currentWallet.Balance + wallet.Balance
 
-	updatedWallet, err := w.pg.UpdateWallet(ctx, id, owner, balance)
+	updatedWallet, err := s.pg.UpdateWallet(ctx, id, owner, balance)
 	if err != nil {
 		return models.WalletInstance{}, fmt.Errorf("pg.UpdateWallet: %w", err)
 	}
@@ -109,8 +109,8 @@ func (w *Wallet) Update(ctx context.Context, wallet models.WalletInstance) (mode
 	return updatedWallet, nil
 }
 
-func (w *Wallet) Delete(ctx context.Context, id string) error {
-	err := w.pg.DeleteWallet(ctx, id)
+func (s *Service) DeleteWallet(ctx context.Context, id string) error {
+	err := s.pg.DeleteWallet(ctx, id)
 	if err != nil {
 		return fmt.Errorf("pg.DeleteWallet: %w", err)
 	}

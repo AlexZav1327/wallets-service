@@ -1,4 +1,4 @@
-package httpserver
+package xrserver
 
 import (
 	"context"
@@ -16,23 +16,19 @@ type Server struct {
 	host    string
 	port    int
 	Server  *http.Server
-	service WalletService
+	service RateService
 	log     *logrus.Entry
 }
 
-type WalletService interface {
-	Create(ctx context.Context, wallet models.WalletInstance) (models.WalletInstance, error)
-	GetList(ctx context.Context) ([]models.WalletInstance, error)
-	Get(ctx context.Context, id string) (models.WalletInstance, error)
-	Update(ctx context.Context, wallet models.WalletInstance) (models.WalletInstance, error)
-	Delete(ctx context.Context, id string) error
+type RateService interface {
+	GetCurrentRate(to, from string) (models.ExchangeRate, error)
 }
 
-func NewServer(host string, port int, service WalletService, log *logrus.Logger) *Server {
+func New(host string, port int, service RateService, log *logrus.Logger) *Server {
 	server := Server{
 		host:    host,
 		port:    port,
-		log:     log.WithField("module", "http"),
+		log:     log.WithField("module", "xr_http"),
 		service: service,
 	}
 
@@ -40,11 +36,7 @@ func NewServer(host string, port int, service WalletService, log *logrus.Logger)
 	r := chi.NewRouter()
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Post("/create", h.create)
-		r.Get("/wallets/{id}", h.get)
-		r.Get("/wallets", h.getList)
-		r.Patch("/wallets/{id}", h.update)
-		r.Delete("/wallets/{id}", h.delete)
+		r.Get("/xr", h.get)
 	})
 
 	server.Server = &http.Server{
@@ -65,13 +57,13 @@ func (s *Server) Run(ctx context.Context) error {
 
 		err := s.Server.Shutdown(shutdownCtx)
 		if err != nil {
-			s.log.Warningf("server.Shutdown: %s", err)
+			s.log.Warningf("Server.Shutdown: %s", err)
 		}
 	}()
 
 	err := s.Server.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("server.ListenAndServe: %w", err)
+		return fmt.Errorf("Server.ListenAndServe: %w", err)
 	}
 
 	return nil
