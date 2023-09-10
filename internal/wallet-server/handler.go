@@ -1,10 +1,12 @@
-package httpserver
+package walletserver
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
+	"github.com/AlexZav1327/service/internal/postgres"
 	"github.com/AlexZav1327/service/models"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -23,7 +25,7 @@ func NewHandler(service WalletService, log *logrus.Logger) *Handler {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
-	wallet := models.WalletInstance{}
+	var wallet models.WalletInstance
 
 	wallet.WalletID = uuid.New()
 
@@ -37,9 +39,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 
 	var createdWallet models.WalletInstance
 
-	createdWallet, err = h.service.Create(r.Context(), wallet)
+	createdWallet, err = h.service.CreateWallet(r.Context(), wallet)
 	if err != nil {
-		h.log.Warningf("service.Create: %s", err)
+		h.log.Warningf("service.CreateWallet: %s", err)
+		w.WriteHeader(http.StatusUnprocessableEntity)
+
+		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
@@ -51,9 +56,9 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getList(w http.ResponseWriter, r *http.Request) {
-	walletsList, err := h.service.GetList(r.Context())
+	walletsList, err := h.service.GetWalletsList(r.Context())
 	if err != nil {
-		h.log.Warningf("service.GetList: %s", err)
+		h.log.Warningf("service.GetWalletsList: %s", err)
 		w.WriteHeader(http.StatusNotFound)
 
 		return
@@ -72,9 +77,9 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	pathParts := strings.Split(path, "/")
 	id := pathParts[3]
 
-	wallet, err := h.service.Get(r.Context(), id)
+	wallet, err := h.service.GetWallet(r.Context(), id)
 	if err != nil {
-		h.log.Warningf("service.Get: %s", err)
+		h.log.Warningf("service.GetWallet: %s", err)
 		w.WriteHeader(http.StatusNotFound)
 
 		return
@@ -89,19 +94,9 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	path := strings.Trim(r.URL.Path, "/")
-	pathParts := strings.Split(path, "/")
-	id := pathParts[3]
+	var wallet models.WalletInstance
 
-	wallet, err := h.service.Get(r.Context(), id)
-	if err != nil {
-		h.log.Warningf("service.Get: %s", err)
-		w.WriteHeader(http.StatusNotFound)
-
-		return
-	}
-
-	err = json.NewDecoder(r.Body).Decode(&wallet)
+	err := json.NewDecoder(r.Body).Decode(&wallet)
 	if err != nil {
 		h.log.Warningf("json.NewDecoder.Decode: %s", err)
 		w.WriteHeader(http.StatusBadRequest)
@@ -109,12 +104,25 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	path := strings.Trim(r.URL.Path, "/")
+	pathParts := strings.Split(path, "/")
+	id := pathParts[3]
+
+	wallet.WalletID = uuid.MustParse(id)
+
 	var updatedWallet models.WalletInstance
 
-	updatedWallet, err = h.service.Update(r.Context(), wallet)
-	if err != nil {
-		h.log.Warningf("service.Update: %s", err)
+	updatedWallet, err = h.service.UpdateWallet(r.Context(), wallet)
+	if err != nil && errors.Is(err, postgres.ErrWalletNotFound) {
+		h.log.Warningf("service.UpdateWallet: %s", err)
 		w.WriteHeader(http.StatusNotFound)
+
+		return
+	}
+
+	if err != nil && !errors.Is(err, postgres.ErrWalletNotFound) {
+		h.log.Warningf("service.UpdateWallet: %s", err)
+		w.WriteHeader(http.StatusUnprocessableEntity)
 
 		return
 	}
@@ -132,11 +140,11 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	pathParts := strings.Split(path, "/")
 	id := pathParts[3]
 
-	err := h.service.Delete(r.Context(), id)
+	err := h.service.DeleteWallet(r.Context(), id)
 
 	switch {
 	case err != nil:
-		h.log.Warningf("service.Delete: %s", err)
+		h.log.Warningf("service.DeleteWallet: %s", err)
 		w.WriteHeader(http.StatusNotFound)
 
 		return

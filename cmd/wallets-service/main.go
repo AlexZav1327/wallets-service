@@ -6,9 +6,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/AlexZav1327/service/internal/httpserver"
 	"github.com/AlexZav1327/service/internal/postgres"
-	"github.com/AlexZav1327/service/internal/service"
+	walletserver "github.com/AlexZav1327/service/internal/wallet-server"
+	walletservice "github.com/AlexZav1327/service/internal/wallet-service"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	migrate "github.com/rubenv/sql-migrate"
 	"github.com/sirupsen/logrus"
@@ -31,10 +31,11 @@ func main() {
 		logger.Panicf("Migrate: %s", err)
 	}
 
-	webServer := httpserver.NewServer("", 8080, service.NewWallet(pg, logger), logger)
+	walletService := walletservice.New(pg, logger)
+	server := walletserver.New("", 8080, walletService, logger)
 
-	err = webServer.Run(ctx)
+	err = server.Run(ctx)
 	if err != nil {
-		logger.Panicf("webServer.Run: %s", err)
+		logger.Panicf("server.Run: %s", err)
 	}
 }
