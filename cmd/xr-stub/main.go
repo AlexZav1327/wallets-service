@@ -16,7 +16,7 @@ func main() {
 
 	logger := logrus.StandardLogger()
 	rateService := xrservice.New(logger)
-	server := xrserver.New("", 8090, rateService, logger)
+	server := xrserver.New("", 8091, rateService, logger)
 
 	err := server.Run(ctx)
 	if err != nil {
