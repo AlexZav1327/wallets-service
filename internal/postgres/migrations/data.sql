@@ -7,3 +7,7 @@ CREATE TABLE wallet (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE idempotency (
+    transaction_key UUID NOT NULL PRIMARY KEY
+);

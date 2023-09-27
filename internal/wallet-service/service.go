@@ -28,13 +28,15 @@ type Service struct {
 }
 
 type WalletStore interface {
-	CreateWallet(ctx context.Context, wallet models.WalletInstance) (models.WalletInstance, error)
-	GetWalletsList(ctx context.Context) ([]models.WalletInstance, error)
-	GetWallet(ctx context.Context, id string) (models.WalletInstance, error)
-	UpdateWallet(ctx context.Context, wallet models.WalletInstance) (models.WalletInstance, error)
+	CreateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
+	GetWalletsList(ctx context.Context) ([]models.ResponseWalletInstance, error)
+	GetWallet(ctx context.Context, id string) (models.ResponseWalletInstance, error)
+	UpdateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
 	DeleteWallet(ctx context.Context, id string) error
-	ManageBalance(ctx context.Context, id string, balance float32) (models.WalletInstance, error)
-	TransferFunds(ctx context.Context, idSrc, idDst string, balanceSrc, balanceDst float32) (models.WalletInstance, error)
+	ManageBalance(ctx context.Context, id string, balance float32) (models.ResponseWalletInstance, error)
+	TransferFunds(ctx context.Context, idSrc, idDst string, balanceSrc, balanceDst float32) (
+		models.ResponseWalletInstance, error)
+	Idempotency(ctx context.Context, id string) error
 }
 
 func New(pg WalletStore, log *logrus.Logger) *Service {
@@ -44,16 +46,23 @@ func New(pg WalletStore, log *logrus.Logger) *Service {
 	}
 }
 
-func (s *Service) CreateWallet(ctx context.Context, wallet models.WalletInstance) (models.WalletInstance, error) {
+func (s *Service) CreateWallet(ctx context.Context, wallet models.RequestWalletInstance) (
+	models.ResponseWalletInstance, error,
+) {
+	err := s.ValidateCurrency(wallet.Currency)
+	if err != nil {
+		return models.ResponseWalletInstance{}, ErrInvalidCurrency
+	}
+
 	createdWallet, err := s.pg.CreateWallet(ctx, wallet)
 	if err != nil {
-		return models.WalletInstance{}, fmt.Errorf("pg.CreateWallet: %w", err)
+		return models.ResponseWalletInstance{}, fmt.Errorf("pg.CreateWallet: %w", err)
 	}
 
 	return createdWallet, nil
 }
 
-func (s *Service) GetWalletsList(ctx context.Context) ([]models.WalletInstance, error) {
+func (s *Service) GetWalletsList(ctx context.Context) ([]models.ResponseWalletInstance, error) {
 	walletsList, err := s.pg.GetWalletsList(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("pg.GetWalletsList: %w", err)
@@ -62,21 +71,26 @@ func (s *Service) GetWalletsList(ctx context.Context) ([]models.WalletInstance, 
 	return walletsList, nil
 }
 
-func (s *Service) GetWallet(ctx context.Context, id string) (models.WalletInstance, error) {
+func (s *Service) GetWallet(ctx context.Context, id string) (models.ResponseWalletInstance, error) {
 	wallet, err := s.pg.GetWallet(ctx, id)
 	if err != nil {
-		return models.WalletInstance{}, fmt.Errorf("pg.GetWallet: %w", err)
+		return models.ResponseWalletInstance{}, fmt.Errorf("pg.GetWallet: %w", err)
 	}
 
 	return wallet, nil
 }
 
-func (s *Service) UpdateWallet(ctx context.Context, wallet models.WalletInstance) (
-	models.WalletInstance, error,
+func (s *Service) UpdateWallet(ctx context.Context, wallet models.RequestWalletInstance) (
+	models.ResponseWalletInstance, error,
 ) {
+	err := s.ValidateCurrency(wallet.Currency)
+	if err != nil {
+		return models.ResponseWalletInstance{}, ErrInvalidCurrency
+	}
+
 	currentWallet, err := s.pg.GetWallet(ctx, wallet.WalletID.String())
 	if err != nil {
-		return models.WalletInstance{}, fmt.Errorf("pg.GetWallet: %w", err)
+		return models.ResponseWalletInstance{}, fmt.Errorf("pg.GetWallet: %w", err)
 	}
 
 	if wallet.Owner == "" {
@@ -88,13 +102,13 @@ func (s *Service) UpdateWallet(ctx context.Context, wallet models.WalletInstance
 	} else {
 		wallet.Balance, err = s.ConvertCurrency(ctx, currentWallet.Currency, wallet.Currency, currentWallet.Balance)
 		if err != nil {
-			return models.WalletInstance{}, fmt.Errorf("ConvertCurrency: %w", err)
+			return models.ResponseWalletInstance{}, fmt.Errorf("ConvertCurrency: %w", err)
 		}
 	}
 
 	updatedWallet, err := s.pg.UpdateWallet(ctx, wallet)
 	if err != nil {
-		return models.WalletInstance{}, fmt.Errorf("pg.UpdateWallet: %w", err)
+		return models.ResponseWalletInstance{}, fmt.Errorf("pg.UpdateWallet: %w", err)
 	}
 
 	return updatedWallet, nil
@@ -109,12 +123,17 @@ func (s *Service) DeleteWallet(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *Service) DepositFunds(ctx context.Context, id string, depositFunds models.ManageFunds) (
-	models.WalletInstance, error,
+func (s *Service) DepositFunds(ctx context.Context, id string, depositFunds models.FundsOperations) (
+	models.ResponseWalletInstance, error,
 ) {
+	err := s.ValidateCurrency(depositFunds.Currency)
+	if err != nil {
+		return models.ResponseWalletInstance{}, ErrInvalidCurrency
+	}
+
 	currentWallet, err := s.pg.GetWallet(ctx, id)
 	if err != nil {
-		return models.WalletInstance{}, fmt.Errorf("pg.GetWallet: %w", err)
+		return models.ResponseWalletInstance{}, fmt.Errorf("pg.GetWallet: %w", err)
 	}
 
 	balance := currentWallet.Balance + depositFunds.Amount
@@ -127,7 +146,7 @@ func (s *Service) DepositFunds(ctx context.Context, id string, depositFunds mode
 			depositFunds.Amount,
 		)
 		if err != nil {
-			return models.WalletInstance{}, fmt.Errorf("ConvertCurrency: %w", err)
+			return models.ResponseWalletInstance{}, fmt.Errorf("ConvertCurrency: %w", err)
 		}
 
 		balance = currentWallet.Balance + convertedDepositAmount
@@ -135,18 +154,23 @@ func (s *Service) DepositFunds(ctx context.Context, id string, depositFunds mode
 
 	updatedWallet, err := s.pg.ManageBalance(ctx, id, balance)
 	if err != nil {
-		return models.WalletInstance{}, fmt.Errorf("pg.ManageFunds: %w", err)
+		return models.ResponseWalletInstance{}, fmt.Errorf("pg.ManageFunds: %w", err)
 	}
 
 	return updatedWallet, nil
 }
 
-func (s *Service) WithdrawFunds(ctx context.Context, id string, withdrawFunds models.ManageFunds) (
-	models.WalletInstance, error,
+func (s *Service) WithdrawFunds(ctx context.Context, id string, withdrawFunds models.FundsOperations) (
+	models.ResponseWalletInstance, error,
 ) {
+	err := s.ValidateCurrency(withdrawFunds.Currency)
+	if err != nil {
+		return models.ResponseWalletInstance{}, ErrInvalidCurrency
+	}
+
 	currentWallet, err := s.pg.GetWallet(ctx, id)
 	if err != nil {
-		return models.WalletInstance{}, fmt.Errorf("pg.GetWallet: %w", err)
+		return models.ResponseWalletInstance{}, fmt.Errorf("pg.GetWallet: %w", err)
 	}
 
 	balance := currentWallet.Balance - withdrawFunds.Amount
@@ -159,30 +183,35 @@ func (s *Service) WithdrawFunds(ctx context.Context, id string, withdrawFunds mo
 			withdrawFunds.Amount,
 		)
 		if err != nil {
-			return models.WalletInstance{}, fmt.Errorf("ConvertCurrency: %w", err)
+			return models.ResponseWalletInstance{}, fmt.Errorf("ConvertCurrency: %w", err)
 		}
 
 		balance = currentWallet.Balance - convertedWithdrawAmount
 	}
 
 	if balance < 0 {
-		return models.WalletInstance{}, ErrOverdraft
+		return models.ResponseWalletInstance{}, ErrOverdraft
 	}
 
 	updatedWallet, err := s.pg.ManageBalance(ctx, id, balance)
 	if err != nil {
-		return models.WalletInstance{}, fmt.Errorf("pg.ManageFunds: %w", err)
+		return models.ResponseWalletInstance{}, fmt.Errorf("pg.ManageFunds: %w", err)
 	}
 
 	return updatedWallet, nil
 }
 
-func (s *Service) TransferFunds(ctx context.Context, idSrc, idDst string, transferFunds models.ManageFunds) (
-	models.WalletInstance, error,
+func (s *Service) TransferFunds(ctx context.Context, idSrc, idDst string, transferFunds models.FundsOperations) (
+	models.ResponseWalletInstance, error,
 ) {
+	err := s.ValidateCurrency(transferFunds.Currency)
+	if err != nil {
+		return models.ResponseWalletInstance{}, ErrInvalidCurrency
+	}
+
 	currentSrcWallet, err := s.pg.GetWallet(ctx, idSrc)
 	if err != nil {
-		return models.WalletInstance{}, fmt.Errorf("pg.GetWallet: %w", err)
+		return models.ResponseWalletInstance{}, fmt.Errorf("pg.GetWallet: %w", err)
 	}
 
 	balanceSrc := currentSrcWallet.Balance - transferFunds.Amount
@@ -195,19 +224,19 @@ func (s *Service) TransferFunds(ctx context.Context, idSrc, idDst string, transf
 			transferFunds.Amount,
 		)
 		if err != nil {
-			return models.WalletInstance{}, fmt.Errorf("ConvertCurrency: %w", err)
+			return models.ResponseWalletInstance{}, fmt.Errorf("ConvertCurrency: %w", err)
 		}
 
 		balanceSrc = currentSrcWallet.Balance - convertedWithdrawAmount
 	}
 
 	if balanceSrc < 0 {
-		return models.WalletInstance{}, ErrOverdraft
+		return models.ResponseWalletInstance{}, ErrOverdraft
 	}
 
 	currentDstWallet, err := s.pg.GetWallet(ctx, idDst)
 	if err != nil {
-		return models.WalletInstance{}, fmt.Errorf("pg.GetWallet: %w", err)
+		return models.ResponseWalletInstance{}, fmt.Errorf("pg.GetWallet: %w", err)
 	}
 
 	balanceDst := currentDstWallet.Balance + transferFunds.Amount
@@ -220,7 +249,7 @@ func (s *Service) TransferFunds(ctx context.Context, idSrc, idDst string, transf
 			transferFunds.Amount,
 		)
 		if err != nil {
-			return models.WalletInstance{}, fmt.Errorf("ConvertCurrency: %w", err)
+			return models.ResponseWalletInstance{}, fmt.Errorf("ConvertCurrency: %w", err)
 		}
 
 		balanceDst = currentDstWallet.Balance + convertedDepositAmount
@@ -228,7 +257,7 @@ func (s *Service) TransferFunds(ctx context.Context, idSrc, idDst string, transf
 
 	updatedWallet, err := s.pg.TransferFunds(ctx, idSrc, idDst, balanceSrc, balanceDst)
 	if err != nil {
-		return models.WalletInstance{}, fmt.Errorf("pg.TransferFunds: %w", err)
+		return models.ResponseWalletInstance{}, fmt.Errorf("pg.TransferFunds: %w", err)
 	}
 
 	return updatedWallet, nil
@@ -266,6 +295,15 @@ func (s *Service) ConvertCurrency(ctx context.Context, currentCurrency, requeste
 	convertedBalance := currentBalance * rates.Bid
 
 	return convertedBalance, nil
+}
+
+func (s *Service) Idempotency(ctx context.Context, key string) error {
+	err := s.pg.Idempotency(ctx, key)
+	if err != nil {
+		return fmt.Errorf("pg.CheckIdempotency: %w", err)
+	}
+
+	return nil
 }
 
 func (*Service) ValidateCurrency(verifiedCurrency string) error {
