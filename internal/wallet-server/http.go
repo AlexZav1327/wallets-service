@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/AlexZav1327/service/models"
 	"github.com/go-chi/chi/v5"
 	"github.com/sirupsen/logrus"
 )
@@ -18,14 +17,6 @@ type Server struct {
 	Server  *http.Server
 	service WalletService
 	log     *logrus.Entry
-}
-
-type WalletService interface {
-	CreateWallet(ctx context.Context, wallet models.WalletInstance) (models.WalletInstance, error)
-	GetWalletsList(ctx context.Context) ([]models.WalletInstance, error)
-	GetWallet(ctx context.Context, id string) (models.WalletInstance, error)
-	UpdateWallet(ctx context.Context, wallet models.WalletInstance) (models.WalletInstance, error)
-	DeleteWallet(ctx context.Context, id string) error
 }
 
 func New(host string, port int, service WalletService, log *logrus.Logger) *Server {
@@ -40,11 +31,14 @@ func New(host string, port int, service WalletService, log *logrus.Logger) *Serv
 	r := chi.NewRouter()
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Post("/create", h.create)
-		r.Get("/wallets/{id}", h.get)
+		r.Post("/wallet/create", h.create)
+		r.Get("/wallet/{id}", h.get)
 		r.Get("/wallets", h.getList)
-		r.Patch("/wallets/{id}", h.update)
-		r.Delete("/wallets/{id}", h.delete)
+		r.Patch("/wallet/{id}", h.update)
+		r.Delete("/wallet/{id}", h.delete)
+		r.Put("/wallet/{id}/deposit", h.deposit)
+		r.Put("/wallet/{id}/withdraw", h.withdraw)
+		r.Put("/wallet/{idSrc}/transfer/{idDst}", h.transfer)
 	})
 
 	server.Server = &http.Server{

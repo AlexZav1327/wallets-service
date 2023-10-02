@@ -14,18 +14,18 @@ const (
 	usd                 = "USD"
 	ask                 = "ask"
 	bid                 = "bid"
-	eurToRubBid float32 = 102.27
-	eurToRubAsk float32 = 108.83
-	eurToUsdBid float32 = 1.08
+	eurToRubBid float32 = 99.35
+	eurToRubAsk float32 = 105.50
+	eurToUsdBid float32 = 1.07
 	eurToUsdAsk float32 = 1.13
-	rubToEurBid float32 = 0.093
-	rubToEurAsk float32 = 0.099
-	rubToUsdBid float32 = 0.097
-	rubToUsdAsk float32 = 0.012
-	usdToEurBid float32 = 0.88
-	usdToEurAsk float32 = 0.92
-	usdToRubBid float32 = 93.04
-	usdToRubAsk float32 = 99.36
+	rubToEurBid float32 = 0.0095
+	rubToEurAsk float32 = 0.0101
+	rubToUsdBid float32 = 0.0102
+	rubToUsdAsk float32 = 0.0108
+	usdToEurBid float32 = 0.92
+	usdToEurAsk float32 = 0.97
+	usdToRubBid float32 = 92.22
+	usdToRubAsk float32 = 98.19
 )
 
 var ErrWrongCurrency = errors.New("currency is not valid")

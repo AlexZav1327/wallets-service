@@ -11,10 +11,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const resetTableQuery = `
-	TRUNCATE TABLE wallet
-`
-
 //go:embed migrations
 var migrations embed.FS
 
@@ -86,8 +82,10 @@ func (p *Postgres) Migrate(direction migrate.MigrationDirection) error {
 	return nil
 }
 
-func (p *Postgres) ResetTable(ctx context.Context) error {
-	_, err := p.db.Exec(ctx, resetTableQuery)
+func (p *Postgres) TruncateTable(ctx context.Context, table string) error {
+	query := `TRUNCATE TABLE ` + table
+
+	_, err := p.db.Exec(ctx, query)
 	if err != nil {
 		return fmt.Errorf("db.Exec: %w", err)
 	}

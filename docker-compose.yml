@@ -3,7 +3,7 @@ version: '3.8'
 services:
   pg:
     image: postgres:latest
-    container_name: web-service_postgres
+    container_name: wallets-service_postgres
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: user
@@ -11,3 +11,11 @@ services:
     ports:
       - '5432:5432'
     command: ['postgres', '-c', 'log_statement=all']
+
+  xr:
+    image: xr_1:latest
+    container_name: exchange-rate_stub
+    ports:
+      - '8091:8091'
+
+

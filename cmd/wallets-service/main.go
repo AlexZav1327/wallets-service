@@ -31,8 +31,8 @@ func main() {
 		logger.Panicf("Migrate: %s", err)
 	}
 
-	walletService := walletservice.New(pg, logger)
-	server := walletserver.New("", 8080, walletService, logger)
+	walletsService := walletservice.New(pg, logger)
+	server := walletserver.New("", 8080, walletsService, logger)
 
 	err = server.Run(ctx)
 	if err != nil {
