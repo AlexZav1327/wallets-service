@@ -24,6 +24,11 @@ const (
 	FROM wallet
 	WHERE wallet_id = $1;
 `
+	getWalletHistoryQuery = `
+	SELECT wallet_id, owner, currency, balance, created_at, operation_type
+	FROM history
+	WHERE wallet_id = $1 AND created_at >= $2 AND created_at <= $3;
+`
 	updateWalletQuery = `
 	UPDATE wallet 
 	SET owner = $2, currency = $3, balance = $4, updated_at = now()
@@ -127,6 +132,54 @@ func (p *Postgres) GetWallet(ctx context.Context, id string) (walletmodel.Respon
 	return wallet, nil
 }
 
+func (p *Postgres) GetWalletHistory(ctx context.Context, walletHistoryPeriod walletmodel.RequestWalletHistory) (
+	[]walletmodel.ResponseWalletHistory, error,
+) {
+	rows, err := p.db.Query(
+		ctx,
+		getWalletHistoryQuery,
+		walletHistoryPeriod.WalletID,
+		walletHistoryPeriod.PeriodStart,
+		walletHistoryPeriod.PeriodEnd,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("db.Query: %w", err)
+	}
+
+	defer rows.Close()
+
+	var walletHistory []walletmodel.ResponseWalletHistory
+
+	for rows.Next() {
+		var wallet walletmodel.ResponseWalletHistory
+
+		err = rows.Scan(
+			&wallet.WalletID,
+			&wallet.Owner,
+			&wallet.Currency,
+			&wallet.Balance,
+			&wallet.Created,
+			&wallet.Operation,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("row.Scan: %w", err)
+		}
+
+		walletHistory = append(walletHistory, wallet)
+	}
+
+	err = rows.Err()
+	if err != nil {
+		return nil, fmt.Errorf("rows.Err: %w", err)
+	}
+
+	if len(walletHistory) == 0 {
+		return nil, ErrWalletNotFound
+	}
+
+	return walletHistory, nil
+}
+
 func (p *Postgres) UpdateWallet(ctx context.Context, wallet walletmodel.RequestWalletInstance) (
 	walletmodel.ResponseWalletInstance, error,
 ) {
@@ -190,25 +243,7 @@ func (p *Postgres) ManageBalance(ctx context.Context, id string, balance float32
 		}
 	}()
 
-	row := p.db.QueryRow(ctx, manageFundsQuery, id, balance)
-
-	var updatedWallet walletmodel.ResponseWalletInstance
-
-	err = row.Scan(
-		&updatedWallet.WalletID,
-		&updatedWallet.Owner,
-		&updatedWallet.Currency,
-		&updatedWallet.Balance,
-		&updatedWallet.Created,
-		&updatedWallet.Updated,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return walletmodel.ResponseWalletInstance{}, ErrWalletNotFound
-		}
-
-		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("row.Scan: %w", err)
-	}
+	updatedWallet, err := p.queryRowToWallet(ctx, manageFundsQuery, id, balance)
 
 	err = tx.Commit(ctx)
 	if err != nil {
@@ -218,7 +253,8 @@ func (p *Postgres) ManageBalance(ctx context.Context, id string, balance float32
 	return updatedWallet, nil
 }
 
-func (p *Postgres) TransferFunds(ctx context.Context, idSrc, idDst string, balanceSrc, balanceDst float32) (walletmodel.ResponseWalletInstance, error) { //nolint:lll
+func (p *Postgres) TransferFunds(ctx context.Context, idSrc, idDst string, balanceSrc, balanceDst float32,
+) (walletmodel.ResponseWalletInstance, error) {
 	tx, err := p.db.Begin(ctx)
 	if err != nil {
 		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("db.BeginTx: %w", err)
@@ -233,45 +269,9 @@ func (p *Postgres) TransferFunds(ctx context.Context, idSrc, idDst string, balan
 		}
 	}()
 
-	rowSrc := p.db.QueryRow(ctx, manageFundsQuery, idSrc, balanceSrc)
+	_, err = p.queryRowToWallet(ctx, manageFundsQuery, idSrc, balanceSrc)
 
-	var srcWallet walletmodel.ResponseWalletInstance
-
-	err = rowSrc.Scan(
-		&srcWallet.WalletID,
-		&srcWallet.Owner,
-		&srcWallet.Currency,
-		&srcWallet.Balance,
-		&srcWallet.Created,
-		&srcWallet.Updated,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return walletmodel.ResponseWalletInstance{}, ErrWalletNotFound
-		}
-
-		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("rowSrc.Scan: %w", err)
-	}
-
-	rowDst := p.db.QueryRow(ctx, manageFundsQuery, idDst, balanceDst)
-
-	var dstWallet walletmodel.ResponseWalletInstance
-
-	err = rowDst.Scan(
-		&dstWallet.WalletID,
-		&dstWallet.Owner,
-		&dstWallet.Currency,
-		&dstWallet.Balance,
-		&dstWallet.Created,
-		&dstWallet.Updated,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return walletmodel.ResponseWalletInstance{}, ErrWalletNotFound
-		}
-
-		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("rowDst.Scan: %w", err)
-	}
+	dstWallet, err := p.queryRowToWallet(ctx, manageFundsQuery, idDst, balanceDst)
 
 	err = tx.Commit(ctx)
 	if err != nil {
@@ -294,4 +294,30 @@ func (p *Postgres) Idempotency(ctx context.Context, key string) error {
 	}
 
 	return nil
+}
+
+func (p *Postgres) queryRowToWallet(ctx context.Context, query, id string, balance float32) (
+	walletmodel.ResponseWalletInstance, error,
+) {
+	row := p.db.QueryRow(ctx, query, id, balance)
+
+	var wallet walletmodel.ResponseWalletInstance
+
+	err := row.Scan(
+		&wallet.WalletID,
+		&wallet.Owner,
+		&wallet.Currency,
+		&wallet.Balance,
+		&wallet.Created,
+		&wallet.Updated,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return walletmodel.ResponseWalletInstance{}, ErrWalletNotFound
+		}
+
+		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("rowSrc.Scan: %w", err)
+	}
+
+	return wallet, nil
 }

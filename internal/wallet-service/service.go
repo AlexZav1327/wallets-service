@@ -31,6 +31,8 @@ type WalletStore interface {
 	CreateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
 	GetWalletsList(ctx context.Context) ([]models.ResponseWalletInstance, error)
 	GetWallet(ctx context.Context, id string) (models.ResponseWalletInstance, error)
+	GetWalletHistory(ctx context.Context, walletHistoryPeriod models.RequestWalletHistory) (
+		[]models.ResponseWalletHistory, error)
 	UpdateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
 	DeleteWallet(ctx context.Context, id string) error
 	ManageBalance(ctx context.Context, id string, balance float32) (models.ResponseWalletInstance, error)
@@ -78,6 +80,17 @@ func (s *Service) GetWallet(ctx context.Context, id string) (models.ResponseWall
 	}
 
 	return wallet, nil
+}
+
+func (s *Service) GetWalletHistory(ctx context.Context, walletHistoryPeriod models.RequestWalletHistory) (
+	[]models.ResponseWalletHistory, error,
+) {
+	walletHistory, err := s.pg.GetWalletHistory(ctx, walletHistoryPeriod)
+	if err != nil {
+		return nil, fmt.Errorf("pg.GetWalletHistory: %w", err)
+	}
+
+	return walletHistory, nil
 }
 
 func (s *Service) UpdateWallet(ctx context.Context, wallet models.RequestWalletInstance) (
@@ -263,7 +276,18 @@ func (s *Service) TransferFunds(ctx context.Context, idSrc, idDst string, transf
 	return updatedWallet, nil
 }
 
-func (s *Service) ConvertCurrency(ctx context.Context, currentCurrency, requestedCurrency string, currentBalance float32) (float32, error) { //nolint:lll
+func (s *Service) Idempotency(ctx context.Context, key string) error {
+	err := s.pg.Idempotency(ctx, key)
+	if err != nil {
+		return fmt.Errorf("pg.CheckIdempotency: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) ConvertCurrency(ctx context.Context, currentCurrency, requestedCurrency string,
+	currentBalance float32) (float32, error,
+) {
 	endpoint := fmt.Sprintf("http://localhost:8091/api/v1/xr?from=%s&to=%s", currentCurrency, requestedCurrency)
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -295,15 +319,6 @@ func (s *Service) ConvertCurrency(ctx context.Context, currentCurrency, requeste
 	convertedBalance := currentBalance * rates.Bid
 
 	return convertedBalance, nil
-}
-
-func (s *Service) Idempotency(ctx context.Context, key string) error {
-	err := s.pg.Idempotency(ctx, key)
-	if err != nil {
-		return fmt.Errorf("pg.CheckIdempotency: %w", err)
-	}
-
-	return nil
 }
 
 func (*Service) ValidateCurrency(verifiedCurrency string) error {

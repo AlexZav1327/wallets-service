@@ -23,6 +23,8 @@ type WalletService interface {
 	CreateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
 	GetWalletsList(ctx context.Context) ([]models.ResponseWalletInstance, error)
 	GetWallet(ctx context.Context, id string) (models.ResponseWalletInstance, error)
+	GetWalletHistory(ctx context.Context, walletHistoryPeriod models.RequestWalletHistory) (
+		[]models.ResponseWalletHistory, error)
 	UpdateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
 	DeleteWallet(ctx context.Context, id string) error
 	DepositFunds(ctx context.Context, id string, depositFunds models.FundsOperations) (
@@ -31,8 +33,6 @@ type WalletService interface {
 		models.ResponseWalletInstance, error)
 	TransferFunds(ctx context.Context, idSrc, idDst string, transferFunds models.FundsOperations) (
 		models.ResponseWalletInstance, error)
-	ConvertCurrency(ctx context.Context, currentCurrency, requestedCurrency string, currentBalance float32) (
-		float32, error)
 	Idempotency(ctx context.Context, key string) error
 }
 
@@ -106,6 +106,35 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	err = json.NewEncoder(w).Encode(wallet)
+	if err != nil {
+		h.log.Warningf("json.NewEncoder.Encode: %s", err)
+	}
+}
+
+func (h *Handler) getHistory(w http.ResponseWriter, r *http.Request) {
+	var walletHistoryPeriod models.RequestWalletHistory
+
+	err := json.NewDecoder(r.Body).Decode(&walletHistoryPeriod)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+
+	walletHistoryPeriod.WalletID = uuid.MustParse(id)
+
+	walletHistory, err := h.service.GetWalletHistory(r.Context(), walletHistoryPeriod)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	err = json.NewEncoder(w).Encode(walletHistory)
 	if err != nil {
 		h.log.Warningf("json.NewEncoder.Encode: %s", err)
 	}

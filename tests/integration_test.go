@@ -29,6 +29,7 @@ const (
 	deposit              = "/deposit"
 	withdraw             = "/withdraw"
 	transfer             = "/transfer/"
+	history              = "/history"
 )
 
 var url = fmt.Sprintf("http://localhost:%d", port)
@@ -40,6 +41,7 @@ type IntegrationTestSuite struct {
 	walletService *walletservice.Service
 	models.RequestWalletInstance
 	models.FundsOperations
+	models.RequestWalletHistory
 }
 
 func (s *IntegrationTestSuite) SetupSuite() {
@@ -79,6 +81,12 @@ func (s *IntegrationTestSuite) SetupTest() {
 		Currency:       "EUR",
 		Amount:         200,
 	}
+
+	s.RequestWalletHistory = models.RequestWalletHistory{
+		WalletID:    uuid.MustParse("01234567-0123-0123-0123-0123456789aa"),
+		PeriodStart: time.Now().Add(-3 * time.Second),
+		PeriodEnd:   time.Now(),
+	}
 }
 
 func (s *IntegrationTestSuite) TearDownTest() {
@@ -88,6 +96,9 @@ func (s *IntegrationTestSuite) TearDownTest() {
 	s.Require().NoError(err)
 
 	err = s.pg.TruncateTable(ctx, "idempotency")
+	s.Require().NoError(err)
+
+	err = s.pg.TruncateTable(ctx, "history")
 	s.Require().NoError(err)
 }
 
@@ -459,8 +470,6 @@ func (s *IntegrationTestSuite) TestTransfer() {
 		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+transfer+walletIdEndpointDst, transaction, nil)
 
 		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
-		s.Require().Equal(s.RequestWalletInstance.Balance, float32(500))
-		s.Require().Equal(walletDst.Balance, float32(350))
 	})
 
 	s.Run("transfer funds not unique transaction key", func() {
@@ -477,5 +486,46 @@ func (s *IntegrationTestSuite) TestTransfer() {
 		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpointSrc+transfer+walletIdEndpointDst, s.FundsOperations, nil)
 
 		s.Require().Equal(http.StatusConflict, resp.StatusCode)
+	})
+}
+
+func (s *IntegrationTestSuite) TestHistory() {
+	s.Run("get wallet history normal case", func() {
+		ctx := context.Background()
+
+		_, err := s.pg.CreateWallet(ctx, s.RequestWalletInstance)
+		s.Require().NoError(err)
+
+		_, err = s.pg.ManageBalance(ctx, s.RequestWalletInstance.WalletID.String(), s.RequestWalletInstance.Balance)
+		s.Require().NoError(err)
+
+		var respData []models.ResponseWalletHistory
+
+		walletIdEndpoint := s.RequestWalletHistory.WalletID.String()
+		resp := s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+walletIdEndpoint+history, s.RequestWalletHistory, &respData)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+	})
+
+	s.Run("get wallet history invalid period", func() {
+		ctx := context.Background()
+
+		s.RequestWalletInstance.TransactionKey = uuid.New()
+		s.RequestWalletInstance.WalletID = uuid.New()
+
+		_, err := s.pg.CreateWallet(ctx, s.RequestWalletInstance)
+		s.Require().NoError(err)
+
+		_, err = s.pg.ManageBalance(ctx, s.RequestWalletInstance.WalletID.String(), s.RequestWalletInstance.Balance)
+		s.Require().NoError(err)
+
+		request := s.RequestWalletHistory
+
+		request.PeriodStart = time.Now().Add(3 * time.Second)
+
+		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
+		resp := s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+walletIdEndpoint+history, request, nil)
+
+		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
 	})
 }

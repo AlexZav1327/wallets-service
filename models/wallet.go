@@ -28,3 +28,18 @@ type FundsOperations struct {
 	Currency       string    `json:"currency"`
 	Amount         float32   `json:"amount"`
 }
+
+type RequestWalletHistory struct {
+	WalletID    uuid.UUID `json:"walletId"`
+	PeriodStart time.Time `json:"periodStart"`
+	PeriodEnd   time.Time `json:"periodEnd"`
+}
+
+type ResponseWalletHistory struct {
+	WalletID  uuid.UUID `json:"walletId"`
+	Owner     string    `json:"owner"`
+	Currency  string    `json:"currency"`
+	Balance   float32   `json:"balance"`
+	Created   time.Time `json:"created"`
+	Operation string    `json:"operation"`
+}

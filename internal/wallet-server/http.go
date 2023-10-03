@@ -34,6 +34,7 @@ func New(host string, port int, service WalletService, log *logrus.Logger) *Serv
 		r.Post("/wallet/create", h.create)
 		r.Get("/wallet/{id}", h.get)
 		r.Get("/wallets", h.getList)
+		r.Get("/wallet/{id}/history", h.getHistory)
 		r.Patch("/wallet/{id}", h.update)
 		r.Delete("/wallet/{id}", h.delete)
 		r.Put("/wallet/{id}/deposit", h.deposit)
