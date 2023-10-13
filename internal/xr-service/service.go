@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/AlexZav1327/service/models"
+	"github.com/AlexZav1327/service/internal/models"
 	"github.com/sirupsen/logrus"
 )
 
@@ -15,7 +15,7 @@ const (
 	ask                 = "ask"
 	bid                 = "bid"
 	eurToRubBid float32 = 99.35
-	eurToRubAsk float32 = 105.50
+	eurToRubAsk float32 = 105.5
 	eurToUsdBid float32 = 1.07
 	eurToUsdAsk float32 = 1.13
 	rubToEurBid float32 = 0.0095

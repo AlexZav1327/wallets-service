@@ -13,7 +13,9 @@ services:
     command: ['postgres', '-c', 'log_statement=all']
 
   xr:
-    image: xr_1:latest
+    build:
+      dockerfile: deploy/exchange-rate/Dockerfile
+      context: .
     container_name: exchange-rate_stub
     ports:
       - '8091:8091'

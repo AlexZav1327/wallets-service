@@ -15,8 +15,8 @@ CREATE TABLE idempotency (
 CREATE TABLE history (
     wallet_id UUID NOT NULL,
     owner VARCHAR NOT NULL,
-    balance NUMERIC(12, 2) NOT NULL DEFAULT 0,
     currency VARCHAR NOT NULL,
+    balance NUMERIC(12, 2) NOT NULL DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     operation_type VARCHAR NOT NULL
 );

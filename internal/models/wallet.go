@@ -30,9 +30,17 @@ type FundsOperations struct {
 }
 
 type RequestWalletHistory struct {
-	WalletID    uuid.UUID `json:"walletId"`
-	PeriodStart time.Time `json:"periodStart"`
-	PeriodEnd   time.Time `json:"periodEnd"`
+	PeriodStart time.Time
+	PeriodEnd   time.Time
+	ListingQueryParams
+}
+
+type ListingQueryParams struct {
+	TextFilter   string
+	ItemsPerPage int
+	Offset       int
+	Sorting      string
+	Descending   bool
 }
 
 type ResponseWalletHistory struct {
