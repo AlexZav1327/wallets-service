@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/AlexZav1327/service/models"
+	"github.com/AlexZav1327/service/internal/models"
 	"github.com/go-chi/chi/v5"
 	"github.com/sirupsen/logrus"
 )

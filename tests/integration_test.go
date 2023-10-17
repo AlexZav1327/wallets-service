@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AlexZav1327/service/internal/models"
 	"github.com/AlexZav1327/service/internal/postgres"
 	walletserver "github.com/AlexZav1327/service/internal/wallet-server"
 	walletservice "github.com/AlexZav1327/service/internal/wallet-service"
-	"github.com/AlexZav1327/service/models"
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	migrate "github.com/rubenv/sql-migrate"
@@ -29,6 +29,7 @@ const (
 	deposit              = "/deposit"
 	withdraw             = "/withdraw"
 	transfer             = "/transfer/"
+	history              = "/history"
 )
 
 var url = fmt.Sprintf("http://localhost:%d", port)
@@ -38,8 +39,6 @@ type IntegrationTestSuite struct {
 	pg            *postgres.Postgres
 	server        *walletserver.Server
 	walletService *walletservice.Service
-	models.RequestWalletInstance
-	models.FundsOperations
 }
 
 func (s *IntegrationTestSuite) SetupSuite() {
@@ -65,21 +64,7 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	time.Sleep(250 * time.Millisecond)
 }
 
-func (s *IntegrationTestSuite) SetupTest() {
-	s.RequestWalletInstance = models.RequestWalletInstance{
-		TransactionKey: uuid.MustParse("76543210-3210-3210-3210-012345678aa1"),
-		WalletID:       uuid.MustParse("01234567-0123-0123-0123-0123456789aa"),
-		Owner:          "Kate",
-		Currency:       "EUR",
-		Balance:        500,
-	}
-
-	s.FundsOperations = models.FundsOperations{
-		TransactionKey: uuid.MustParse("76543210-3210-3210-3210-012345678aa2"),
-		Currency:       "EUR",
-		Amount:         200,
-	}
-}
+func (s *IntegrationTestSuite) SetupTest() {}
 
 func (s *IntegrationTestSuite) TearDownTest() {
 	ctx := context.Background()
@@ -89,13 +74,18 @@ func (s *IntegrationTestSuite) TearDownTest() {
 
 	err = s.pg.TruncateTable(ctx, "idempotency")
 	s.Require().NoError(err)
+
+	err = s.pg.TruncateTable(ctx, "history")
+	s.Require().NoError(err)
 }
 
 func TestIntegrationTestSuite(t *testing.T) {
 	suite.Run(t, new(IntegrationTestSuite))
 }
 
-func (s *IntegrationTestSuite) sendRequest(ctx context.Context, method, endpoint string, body interface{}, dest interface{}) *http.Response {
+func (s *IntegrationTestSuite) sendRequest(ctx context.Context, method, endpoint string, body interface{},
+	dest interface{},
+) *http.Response {
 	s.T().Helper()
 
 	reqBody, err := json.Marshal(body)
@@ -126,32 +116,45 @@ func (s *IntegrationTestSuite) TestCRUD() {
 	s.Run("create wallet normal case", func() {
 		ctx := context.Background()
 
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Kate"
+		req.Currency = "EUR"
+		req.Balance = 350
+
 		var respData models.ResponseWalletInstance
 
-		resp := s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, s.RequestWalletInstance, &respData)
+		resp := s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
 
 		s.Require().Equal(http.StatusCreated, resp.StatusCode)
-		s.Require().Equal(s.RequestWalletInstance.WalletID, respData.WalletID)
-		s.Require().Equal(s.RequestWalletInstance.Owner, respData.Owner)
-		s.Require().Equal(s.RequestWalletInstance.Currency, respData.Currency)
+		s.Require().Equal(req.Owner, respData.Owner)
+		s.Require().Equal(req.Currency, respData.Currency)
 		s.Require().Equal(float32(0), respData.Balance)
 	})
 
-	s.Run("create wallet invalid currency", func() {
+	s.Run("create wallet not valid currency", func() {
 		ctx := context.Background()
-		wallet := s.RequestWalletInstance
 
-		wallet.TransactionKey = uuid.New()
-		wallet.Currency = "XYZ"
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Alex"
+		req.Currency = "XYZ"
 
-		resp := s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, wallet, nil)
+		resp := s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, nil)
 
 		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
 	})
 
-	s.Run("create wallet not unique transaction key", func() {
+	s.Run("create wallet non-idempotent request", func() {
 		ctx := context.Background()
-		resp := s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, s.RequestWalletInstance, nil)
+
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Alex"
+		req.Currency = "USD"
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, nil)
+		resp := s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, nil)
 
 		s.Require().Equal(http.StatusConflict, resp.StatusCode)
 	})
@@ -159,80 +162,121 @@ func (s *IntegrationTestSuite) TestCRUD() {
 	s.Run("get wallet normal case", func() {
 		ctx := context.Background()
 
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Kate"
+		req.Currency = "RUB"
+
 		var respData models.ResponseWalletInstance
 
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
+
+		walletIdEndpoint := respData.WalletID.String()
 		resp := s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+walletIdEndpoint, nil, &respData)
 
 		s.Require().Equal(http.StatusOK, resp.StatusCode)
-		s.Require().Equal(s.RequestWalletInstance.Owner, respData.Owner)
-		s.Require().Equal(s.RequestWalletInstance.Currency, respData.Currency)
-		s.Require().Equal(float32(0), respData.Balance)
+		s.Require().Equal(req.Owner, respData.Owner)
+		s.Require().Equal(req.Currency, respData.Currency)
 	})
 
-	s.Run("get wallet invalid wallet ID", func() {
+	s.Run("get wallet not valid wallet ID", func() {
 		ctx := context.Background()
-		walletIdEndpoint := uuid.New().String()
 
+		walletIdEndpoint := uuid.New().String()
 		resp := s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+walletIdEndpoint, nil, nil)
 
 		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
 	})
 
-	s.Run("get a list of wallets normal case", func() {
+	s.Run("update wallet normal case", func() {
 		ctx := context.Background()
 
-		resp := s.sendRequest(ctx, http.MethodGet, url+walletsEndpoint, nil, nil)
-
-		s.Require().Equal(http.StatusOK, resp.StatusCode)
-	})
-
-	s.Run("update wallet currency normal case", func() {
-		ctx := context.Background()
-
-		_, err := s.pg.ManageBalance(ctx, s.RequestWalletInstance.WalletID.String(), s.RequestWalletInstance.Balance)
-		s.Require().NoError(err)
-
-		wallet := s.RequestWalletInstance
-
-		wallet.Currency = "USD"
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Liza"
+		req.Currency = "EUR"
 
 		var respData models.ResponseWalletInstance
 
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
-		resp := s.sendRequest(ctx, http.MethodPatch, url+walletEndpoint+walletIdEndpoint, wallet, &respData)
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
 
-		convertedCurrentCurrencyFunds, _ := s.walletService.ConvertCurrency(ctx, s.RequestWalletInstance.Currency, wallet.Currency, s.RequestWalletInstance.Balance)
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "EUR"
+		reqDeposit.Amount = 100
+
+		walletIdEndpoint := respData.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, &respData)
+
+		reqUpdate := req
+		reqUpdate.Owner = "Alex"
+		reqUpdate.Currency = "USD"
+
+		resp := s.sendRequest(ctx, http.MethodPatch, url+walletEndpoint+walletIdEndpoint, reqUpdate, &respData)
+
+		convertedFunds, _ := s.walletService.ConvertCurrency(ctx, req.Currency, reqUpdate.Currency, reqDeposit.Amount)
 
 		s.Require().Equal(http.StatusOK, resp.StatusCode)
-		s.Require().Equal(convertedCurrentCurrencyFunds, respData.Balance)
+		s.Require().Equal(reqUpdate.Owner, respData.Owner)
+		s.Require().Equal(reqUpdate.Currency, respData.Currency)
+		s.Require().Equal(convertedFunds, respData.Balance)
 	})
 
-	s.Run("update wallet invalid currency", func() {
+	s.Run("update wallet not valid currency", func() {
 		ctx := context.Background()
 
-		wallet := s.RequestWalletInstance
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Liza"
+		req.Currency = "EUR"
 
-		wallet.Currency = "XYZ"
+		var respData models.ResponseWalletInstance
 
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
-		resp := s.sendRequest(ctx, http.MethodPatch, url+walletEndpoint+walletIdEndpoint, wallet, nil)
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
+
+		reqUpdate := req
+		reqUpdate.Currency = "XYZ"
+
+		walletIdEndpoint := respData.WalletID.String()
+		resp := s.sendRequest(ctx, http.MethodPatch, url+walletEndpoint+walletIdEndpoint, reqUpdate, nil)
+
+		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
+	})
+
+	s.Run("update wallet not valid wallet ID", func() {
+		ctx := context.Background()
+
+		req := models.RequestWalletInstance{}
+		req.Currency = "RUB"
+
+		walletIdEndpoint := uuid.New().String()
+		resp := s.sendRequest(ctx, http.MethodPatch, url+walletEndpoint+walletIdEndpoint, req, nil)
 
 		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
 	})
 
 	s.Run("delete wallet normal case", func() {
 		ctx := context.Background()
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
+
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Alex"
+		req.Currency = "RUB"
+
+		var respData models.ResponseWalletInstance
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
+
+		walletIdEndpoint := respData.WalletID.String()
 		resp := s.sendRequest(ctx, http.MethodDelete, url+walletEndpoint+walletIdEndpoint, nil, nil)
 
 		s.Require().Equal(http.StatusNoContent, resp.StatusCode)
 	})
 
-	s.Run("delete wallet invalid wallet ID", func() {
+	s.Run("delete wallet not valid wallet ID", func() {
 		ctx := context.Background()
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
 
+		walletIdEndpoint := uuid.New().String()
 		resp := s.sendRequest(ctx, http.MethodDelete, url+walletEndpoint+walletIdEndpoint, nil, nil)
 
 		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
@@ -243,73 +287,124 @@ func (s *IntegrationTestSuite) TestDeposit() {
 	s.Run("deposit funds current currency normal case", func() {
 		ctx := context.Background()
 
-		_, err := s.pg.CreateWallet(ctx, s.RequestWalletInstance)
-		s.Require().NoError(err)
-
-		_, err = s.pg.ManageBalance(ctx, s.RequestWalletInstance.WalletID.String(), s.RequestWalletInstance.Balance)
-		s.Require().NoError(err)
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Kate"
+		req.Currency = "RUB"
 
 		var respData models.ResponseWalletInstance
 
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
-		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, s.FundsOperations, &respData)
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
+
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "RUB"
+		reqDeposit.Amount = 1000
+
+		walletIdEndpoint := respData.WalletID.String()
+		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, &respData)
 
 		s.Require().Equal(http.StatusOK, resp.StatusCode)
-		s.Require().Equal(s.RequestWalletInstance.Balance+s.FundsOperations.Amount, respData.Balance)
+		s.Require().Equal(reqDeposit.Amount, respData.Balance)
 	})
 
 	s.Run("deposit funds different currency normal case", func() {
 		ctx := context.Background()
-		transaction := s.FundsOperations
 
-		transaction.TransactionKey = uuid.New()
-		transaction.Currency = "RUB"
-		transaction.Amount = 10000
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Kate"
+		req.Currency = "RUB"
 
 		var respData models.ResponseWalletInstance
 
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
-		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, transaction, &respData)
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
 
-		convertedDifferentCurrencyFunds, _ := s.walletService.ConvertCurrency(ctx, transaction.Currency, s.RequestWalletInstance.Currency, transaction.Amount)
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "RUB"
+		reqDeposit.Amount = 1000
+
+		walletIdEndpoint := respData.WalletID.String()
+		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, &respData)
+
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "EUR"
+		resp = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, &respData)
+
+		convertedFunds, _ := s.walletService.ConvertCurrency(ctx, reqDeposit.Currency, req.Currency, reqDeposit.Amount)
 
 		s.Require().Equal(http.StatusOK, resp.StatusCode)
-		s.Require().Equal(s.RequestWalletInstance.Balance+s.FundsOperations.Amount+convertedDifferentCurrencyFunds, respData.Balance)
+		s.Require().Equal(reqDeposit.Amount+convertedFunds, respData.Balance)
 	})
 
-	s.Run("deposit funds invalid currency", func() {
+	s.Run("deposit funds non-idempotent request", func() {
 		ctx := context.Background()
-		transaction := s.FundsOperations
 
-		transaction.TransactionKey = uuid.New()
-		transaction.Currency = "XYZ"
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Alex"
+		req.Currency = "USD"
 
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
-		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, transaction, nil)
+		var respData models.ResponseWalletInstance
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
+
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = req.TransactionKey
+		reqDeposit.Currency = "RUB"
+		reqDeposit.Amount = 1000
+
+		walletIdEndpoint := respData.WalletID.String()
+		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, nil)
+
+		s.Require().Equal(http.StatusConflict, resp.StatusCode)
+	})
+
+	s.Run("deposit funds not valid currency", func() {
+		ctx := context.Background()
+
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Alex"
+		req.Currency = "USD"
+
+		var respData models.ResponseWalletInstance
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
+
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "XYZ"
+		reqDeposit.Amount = 1000
+
+		walletIdEndpoint := respData.WalletID.String()
+		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, nil)
 
 		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
 	})
 
-	s.Run("deposit funds negative value", func() {
+	s.Run("deposit funds non-positive amount value", func() {
 		ctx := context.Background()
-		transaction := s.FundsOperations
 
-		transaction.TransactionKey = uuid.New()
-		transaction.Amount = -100
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Alex"
+		req.Currency = "USD"
 
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
-		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, transaction, nil)
+		var respData models.ResponseWalletInstance
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
+
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "EUR"
+		reqDeposit.Amount = 0
+
+		walletIdEndpoint := respData.WalletID.String()
+		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, nil)
 
 		s.Require().Equal(http.StatusUnprocessableEntity, resp.StatusCode)
-	})
-
-	s.Run("deposit funds not unique transaction key", func() {
-		ctx := context.Background()
-
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
-		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, s.FundsOperations, nil)
-
-		s.Require().Equal(http.StatusConflict, resp.StatusCode)
 	})
 }
 
@@ -317,74 +412,155 @@ func (s *IntegrationTestSuite) TestWithdraw() {
 	s.Run("withdraw funds current currency normal case", func() {
 		ctx := context.Background()
 
-		_, err := s.pg.CreateWallet(ctx, s.RequestWalletInstance)
-		s.Require().NoError(err)
-
-		_, err = s.pg.ManageBalance(ctx, s.RequestWalletInstance.WalletID.String(), s.RequestWalletInstance.Balance)
-		s.Require().NoError(err)
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Kate"
+		req.Currency = "RUB"
 
 		var respData models.ResponseWalletInstance
 
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
-		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+withdraw, s.FundsOperations, &respData)
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
+
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "RUB"
+		reqDeposit.Amount = 1000
+
+		walletIdEndpoint := respData.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, nil)
+
+		reqWithdraw := models.FundsOperations{}
+		reqWithdraw.TransactionKey = uuid.New()
+		reqWithdraw.Currency = "RUB"
+		reqWithdraw.Amount = 200
+
+		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+withdraw, reqWithdraw, &respData)
 
 		s.Require().Equal(http.StatusOK, resp.StatusCode)
-		s.Require().Equal(s.RequestWalletInstance.Balance-s.FundsOperations.Amount, respData.Balance)
+		s.Require().Equal(reqDeposit.Amount-reqWithdraw.Amount, respData.Balance)
 	})
 
 	s.Run("withdraw funds different currency normal case", func() {
 		ctx := context.Background()
-		transaction := s.FundsOperations
 
-		transaction.TransactionKey = uuid.New()
-		transaction.Currency = "RUB"
-		transaction.Amount = 1000
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Kate"
+		req.Currency = "RUB"
 
 		var respData models.ResponseWalletInstance
 
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
-		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+withdraw, transaction, &respData)
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
 
-		convertedDifferentCurrencyFunds, _ := s.walletService.ConvertCurrency(ctx, transaction.Currency, s.RequestWalletInstance.Currency, transaction.Amount)
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "RUB"
+		reqDeposit.Amount = 1000
+
+		walletIdEndpoint := respData.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, nil)
+
+		reqWithdraw := models.FundsOperations{}
+		reqWithdraw.TransactionKey = uuid.New()
+		reqWithdraw.Currency = "USD"
+		reqWithdraw.Amount = 1
+
+		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+withdraw, reqWithdraw, &respData)
+
+		convertedFunds, _ := s.walletService.ConvertCurrency(ctx, reqWithdraw.Currency, reqDeposit.Currency, reqWithdraw.Amount)
 
 		s.Require().Equal(http.StatusOK, resp.StatusCode)
-		s.Require().Equal(s.RequestWalletInstance.Balance-s.FundsOperations.Amount-convertedDifferentCurrencyFunds, respData.Balance)
+		s.Require().Equal(reqDeposit.Amount-convertedFunds, respData.Balance)
+	})
+
+	s.Run("withdraw funds non-idempotent request", func() {
+		ctx := context.Background()
+
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Kate"
+		req.Currency = "RUB"
+
+		var respData models.ResponseWalletInstance
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
+
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "RUB"
+		reqDeposit.Amount = 1000
+
+		walletIdEndpoint := respData.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, nil)
+
+		reqWithdraw := models.FundsOperations{}
+		reqWithdraw.TransactionKey = reqDeposit.TransactionKey
+		reqWithdraw.Currency = "RUB"
+		reqWithdraw.Amount = 1200
+
+		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+withdraw, reqWithdraw, nil)
+
+		s.Require().Equal(http.StatusConflict, resp.StatusCode)
 	})
 
 	s.Run("withdraw funds overdraft", func() {
 		ctx := context.Background()
-		transaction := s.FundsOperations
 
-		transaction.TransactionKey = uuid.New()
-		transaction.Currency = "RUB"
-		transaction.Amount = 100000
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Kate"
+		req.Currency = "RUB"
 
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
-		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+withdraw, transaction, nil)
+		var respData models.ResponseWalletInstance
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
+
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "RUB"
+		reqDeposit.Amount = 1000
+
+		walletIdEndpoint := respData.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, nil)
+
+		reqWithdraw := models.FundsOperations{}
+		reqWithdraw.TransactionKey = uuid.New()
+		reqWithdraw.Currency = "RUB"
+		reqWithdraw.Amount = 1200
+
+		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+withdraw, reqWithdraw, nil)
 
 		s.Require().Equal(http.StatusUnprocessableEntity, resp.StatusCode)
 	})
 
-	s.Run("withdraw funds invalid currency", func() {
+	s.Run("withdraw funds not valid currency", func() {
 		ctx := context.Background()
-		transaction := s.FundsOperations
 
-		transaction.TransactionKey = uuid.New()
-		transaction.Currency = "XYZ"
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Kate"
+		req.Currency = "RUB"
 
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
-		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+withdraw, transaction, nil)
+		var respData models.ResponseWalletInstance
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
+
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "RUB"
+		reqDeposit.Amount = 1000
+
+		walletIdEndpoint := respData.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, &respData)
+
+		reqWithdraw := models.FundsOperations{}
+		reqWithdraw.TransactionKey = uuid.New()
+		reqWithdraw.Currency = "XYZ"
+		reqWithdraw.Amount = 200
+
+		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+withdraw, reqWithdraw, nil)
 
 		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
-	})
-
-	s.Run("withdraw funds not unique transaction key", func() {
-		ctx := context.Background()
-
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
-		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+withdraw, s.FundsOperations, nil)
-
-		s.Require().Equal(http.StatusConflict, resp.StatusCode)
 	})
 }
 
@@ -392,90 +568,307 @@ func (s *IntegrationTestSuite) TestTransfer() {
 	s.Run("transfer funds normal case", func() {
 		ctx := context.Background()
 
-		_, err := s.pg.CreateWallet(ctx, s.RequestWalletInstance)
-		s.Require().NoError(err)
-
-		_, err = s.pg.ManageBalance(ctx, s.RequestWalletInstance.WalletID.String(), s.RequestWalletInstance.Balance)
-		s.Require().NoError(err)
-
-		walletDst := s.RequestWalletInstance
-
-		walletDst.TransactionKey = uuid.New()
-		walletDst.WalletID = uuid.New()
-		walletDst.Currency = "USD"
-		walletDst.Balance = 350
-
-		_, err = s.pg.CreateWallet(ctx, walletDst)
-		s.Require().NoError(err)
-
-		_, err = s.pg.ManageBalance(ctx, walletDst.WalletID.String(), walletDst.Balance)
-		s.Require().NoError(err)
+		reqSrcWallet := models.RequestWalletInstance{}
+		reqSrcWallet.TransactionKey = uuid.New()
+		reqSrcWallet.Owner = "Alex"
+		reqSrcWallet.Currency = "RUB"
 
 		var respData models.ResponseWalletInstance
 
-		walletIdEndpointSrc := s.RequestWalletInstance.WalletID.String()
-		walletIdEndpointDst := walletDst.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, reqSrcWallet, &respData)
 
-		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpointSrc+transfer+walletIdEndpointDst, s.FundsOperations, &respData)
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "RUB"
+		reqDeposit.Amount = 10000
 
-		convertedTransferredFunds, _ := s.walletService.ConvertCurrency(ctx, s.FundsOperations.Currency, walletDst.Currency, s.FundsOperations.Amount)
+		srcWalletIdEndpoint := respData.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+srcWalletIdEndpoint+deposit, reqDeposit, nil)
+
+		reqDstWallet := models.RequestWalletInstance{}
+		reqDstWallet.TransactionKey = uuid.New()
+		reqDstWallet.Owner = "Kate"
+		reqDstWallet.Currency = "USD"
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, reqDstWallet, &respData)
+
+		reqTransfer := models.FundsOperations{}
+		reqTransfer.TransactionKey = uuid.New()
+		reqTransfer.Currency = "RUB"
+		reqTransfer.Amount = 9999
+
+		dstWalletEndpoint := respData.WalletID.String()
+		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+srcWalletIdEndpoint+transfer+dstWalletEndpoint,
+			reqTransfer, &respData)
+
+		convertedFunds, _ := s.walletService.ConvertCurrency(ctx, reqSrcWallet.Currency, reqDstWallet.Currency,
+			reqTransfer.Amount)
 
 		s.Require().Equal(http.StatusOK, resp.StatusCode)
-		s.Require().Equal(walletDst.Balance+convertedTransferredFunds, respData.Balance)
+		s.Require().Equal(convertedFunds, respData.Balance)
+
+		_ = s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+srcWalletIdEndpoint, nil, &respData)
+
+		s.Require().Equal(reqDeposit.Amount-reqTransfer.Amount, respData.Balance)
 	})
 
-	s.Run("transfer funds invalid destination wallet ID", func() {
+	s.Run("transfer funds non-idempotent request", func() {
 		ctx := context.Background()
 
-		s.RequestWalletInstance.TransactionKey = uuid.New()
-		s.RequestWalletInstance.WalletID = uuid.New()
+		reqSrcWallet := models.RequestWalletInstance{}
+		reqSrcWallet.TransactionKey = uuid.New()
+		reqSrcWallet.Owner = "Alex"
+		reqSrcWallet.Currency = "RUB"
 
-		_, err := s.pg.CreateWallet(ctx, s.RequestWalletInstance)
-		s.Require().NoError(err)
+		var respData models.ResponseWalletInstance
 
-		_, err = s.pg.ManageBalance(ctx, s.RequestWalletInstance.WalletID.String(), s.RequestWalletInstance.Balance)
-		s.Require().NoError(err)
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, reqSrcWallet, &respData)
 
-		walletDst := s.RequestWalletInstance
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "RUB"
+		reqDeposit.Amount = 10000
 
-		walletDst.TransactionKey = uuid.New()
-		walletDst.WalletID = uuid.New()
-		walletDst.Currency = "USD"
-		walletDst.Balance = 350
+		srcWalletIdEndpoint := respData.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+srcWalletIdEndpoint+deposit, reqDeposit, nil)
 
-		_, err = s.pg.CreateWallet(ctx, walletDst)
-		s.Require().NoError(err)
+		reqTransfer := models.FundsOperations{}
+		reqTransfer.TransactionKey = reqDeposit.TransactionKey
+		reqTransfer.Currency = "RUB"
+		reqTransfer.Amount = 9999
 
-		_, err = s.pg.ManageBalance(ctx, walletDst.WalletID.String(), walletDst.Balance)
-		s.Require().NoError(err)
+		dstWalletEndpoint := uuid.New().String()
+		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+srcWalletIdEndpoint+transfer+dstWalletEndpoint,
+			reqTransfer, nil)
 
-		transaction := s.FundsOperations
-
-		transaction.TransactionKey = uuid.New()
-
-		walletIdEndpoint := s.RequestWalletInstance.WalletID.String()
-		walletIdEndpointDst := uuid.New().String()
-
-		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+transfer+walletIdEndpointDst, transaction, nil)
-
-		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
-		s.Require().Equal(s.RequestWalletInstance.Balance, float32(500))
-		s.Require().Equal(walletDst.Balance, float32(350))
-	})
-
-	s.Run("transfer funds not unique transaction key", func() {
-		ctx := context.Background()
-
-		walletDst := s.RequestWalletInstance
-
-		walletDst.TransactionKey = uuid.New()
-		walletDst.WalletID = uuid.New()
-
-		walletIdEndpointSrc := s.RequestWalletInstance.WalletID.String()
-		walletIdEndpointDst := walletDst.WalletID.String()
-
-		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpointSrc+transfer+walletIdEndpointDst, s.FundsOperations, nil)
+		_ = s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+srcWalletIdEndpoint, nil, &respData)
 
 		s.Require().Equal(http.StatusConflict, resp.StatusCode)
+		s.Require().Equal(reqDeposit.Amount, respData.Balance)
+	})
+
+	s.Run("transfer funds not valid destination wallet ID", func() {
+		ctx := context.Background()
+
+		reqSrcWallet := models.RequestWalletInstance{}
+		reqSrcWallet.TransactionKey = uuid.New()
+		reqSrcWallet.Owner = "Alex"
+		reqSrcWallet.Currency = "RUB"
+
+		var respData models.ResponseWalletInstance
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, reqSrcWallet, &respData)
+
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "RUB"
+		reqDeposit.Amount = 10000
+
+		srcWalletIdEndpoint := respData.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+srcWalletIdEndpoint+deposit, reqDeposit, nil)
+
+		reqTransfer := models.FundsOperations{}
+		reqTransfer.TransactionKey = uuid.New()
+		reqTransfer.Currency = "RUB"
+		reqTransfer.Amount = 9999
+
+		dstWalletEndpoint := uuid.New().String()
+		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+srcWalletIdEndpoint+transfer+dstWalletEndpoint,
+			reqTransfer, nil)
+
+		_ = s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+srcWalletIdEndpoint, nil, &respData)
+
+		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
+		s.Require().Equal(reqDeposit.Amount, respData.Balance)
+	})
+}
+
+func (s *IntegrationTestSuite) TestWalletsList() {
+	s.Run("get empty list of wallets normal case", func() {
+		ctx := context.Background()
+
+		var respData []models.ResponseWalletInstance
+
+		resp := s.sendRequest(ctx, http.MethodGet, url+walletsEndpoint, nil, &respData)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		s.Require().Equal([]models.ResponseWalletInstance{}, respData)
+	})
+
+	s.Run("get list of wallets normal case", func() {
+		ctx := context.Background()
+
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Alex"
+		req.Currency = "RUB"
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, nil)
+
+		req.TransactionKey = uuid.New()
+		req.Owner = "Kate"
+		req.Currency = "USD"
+
+		var respData models.ResponseWalletInstance
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
+
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "USD"
+		reqDeposit.Amount = 100
+
+		walletIdEndpoint := respData.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, nil)
+
+		req.TransactionKey = uuid.New()
+		req.Owner = "Liza"
+		req.Currency = "EUR"
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, nil)
+
+		var respDataList []models.ResponseWalletInstance
+
+		resp := s.sendRequest(ctx, http.MethodGet, url+walletsEndpoint, nil, &respDataList)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		s.Require().Equal(3, len(respDataList))
+
+		queryParams := "?textFilter=Alex"
+		resp = s.sendRequest(ctx, http.MethodGet, url+walletsEndpoint+queryParams, nil, &respDataList)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		s.Require().Equal(1, len(respDataList))
+		s.Require().Equal("Alex", respDataList[0].Owner)
+
+		queryParams = "?sorting=balance&descending=true"
+		resp = s.sendRequest(ctx, http.MethodGet, url+walletsEndpoint+queryParams, nil, &respDataList)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		s.Require().Equal(float32(100), respDataList[0].Balance)
+
+		queryParams = "?itemsPerPage=2"
+		resp = s.sendRequest(ctx, http.MethodGet, url+walletsEndpoint+queryParams, nil, &respDataList)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		s.Require().Equal(2, len(respDataList))
+
+		queryParams = "?offset=1"
+		resp = s.sendRequest(ctx, http.MethodGet, url+walletsEndpoint+queryParams, nil, &respDataList)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		s.Require().Equal(2, len(respDataList))
+	})
+}
+
+func (s *IntegrationTestSuite) TestHistory() {
+	s.Run("get wallet history normal case", func() {
+		ctx := context.Background()
+
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Alex"
+		req.Currency = "USD"
+
+		var respData models.ResponseWalletInstance
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
+
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "USD"
+		reqDeposit.Amount = 1000
+
+		walletIdEndpoint := respData.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, nil)
+
+		reqWithdraw := models.FundsOperations{}
+		reqWithdraw.TransactionKey = uuid.New()
+		reqWithdraw.Currency = "USD"
+		reqWithdraw.Amount = 150
+
+		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+withdraw, reqWithdraw, nil)
+
+		reqUpdate := req
+		reqUpdate.Owner = "Noname"
+		reqUpdate.Currency = "EUR"
+
+		_ = s.sendRequest(ctx, http.MethodPatch, url+walletEndpoint+walletIdEndpoint, reqUpdate, nil)
+
+		_ = s.sendRequest(ctx, http.MethodDelete, url+walletEndpoint+walletIdEndpoint, nil, nil)
+
+		var respDataHistory []models.ResponseWalletHistory
+
+		queryParams := fmt.Sprintf("?periodStart=%s&periodEnd=%s",
+			time.Now().Add(-12*time.Hour).Format("2006-01-02T15:04:05"),
+			time.Now().Format("2006-01-02T15:04:05"))
+
+		resp := s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+walletIdEndpoint+history+queryParams, nil,
+			&respDataHistory)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		s.Require().Equal(5, len(respDataHistory))
+
+		queryParams = "?textFilter=Noname"
+		resp = s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+walletIdEndpoint+history+queryParams, nil,
+			&respDataHistory)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		s.Require().Equal(2, len(respDataHistory))
+		s.Require().Equal("Noname", respDataHistory[0].Owner)
+
+		queryParams = "?sorting=balance&descending=true"
+		resp = s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+walletIdEndpoint+history+queryParams, nil,
+			&respDataHistory)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		s.Require().Equal(float32(1000), respDataHistory[0].Balance)
+
+		queryParams = "?itemsPerPage=3"
+		resp = s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+walletIdEndpoint+history+queryParams, nil,
+			&respDataHistory)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		s.Require().Equal(3, len(respDataHistory))
+
+		queryParams = "?offset=2"
+		resp = s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+walletIdEndpoint+history+queryParams, nil,
+			&respDataHistory)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		s.Require().Equal(3, len(respDataHistory))
+	})
+
+	s.Run("get wallet history non-active period", func() {
+		ctx := context.Background()
+
+		req := models.RequestWalletInstance{}
+		req.TransactionKey = uuid.New()
+		req.Owner = "Alex"
+		req.Currency = "USD"
+
+		var respData models.ResponseWalletInstance
+
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
+
+		reqDeposit := models.FundsOperations{}
+		reqDeposit.TransactionKey = uuid.New()
+		reqDeposit.Currency = "USD"
+		reqDeposit.Amount = 1000
+
+		walletIdEndpoint := respData.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, nil)
+
+		var respDataHistory []models.ResponseWalletHistory
+
+		queryParams := fmt.Sprintf("?periodStart=%s&periodEnd=%s",
+			time.Now().Format("2006-01-02T15:04:05"),
+			time.Now().Add(3*time.Second).Format("2006-01-02T15:04:05"))
+
+		resp := s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+walletIdEndpoint+history+queryParams, nil,
+			&respDataHistory)
+
+		s.Require().Equal(http.StatusOK, resp.StatusCode)
+		s.Require().Equal([]models.ResponseWalletHistory{}, respDataHistory)
 	})
 }

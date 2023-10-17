@@ -5,13 +5,21 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
+	"time"
 
+	"github.com/AlexZav1327/service/internal/models"
 	"github.com/AlexZav1327/service/internal/postgres"
 	walletservice "github.com/AlexZav1327/service/internal/wallet-service"
-	"github.com/AlexZav1327/service/models"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
+)
+
+const (
+	defaultLimit     = 20
+	defaultTimeRange = 24
+	timeFormatLayout = "2006-01-02T15:04:05"
 )
 
 type Handler struct {
@@ -21,8 +29,10 @@ type Handler struct {
 
 type WalletService interface {
 	CreateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
-	GetWalletsList(ctx context.Context) ([]models.ResponseWalletInstance, error)
+	GetWalletsList(ctx context.Context, params models.ListingQueryParams) ([]models.ResponseWalletInstance, error)
 	GetWallet(ctx context.Context, id string) (models.ResponseWalletInstance, error)
+	GetWalletHistory(ctx context.Context, id string, params models.RequestWalletHistory) (
+		[]models.ResponseWalletHistory, error)
 	UpdateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
 	DeleteWallet(ctx context.Context, id string) error
 	DepositFunds(ctx context.Context, id string, depositFunds models.FundsOperations) (
@@ -31,8 +41,6 @@ type WalletService interface {
 		models.ResponseWalletInstance, error)
 	TransferFunds(ctx context.Context, idSrc, idDst string, transferFunds models.FundsOperations) (
 		models.ResponseWalletInstance, error)
-	ConvertCurrency(ctx context.Context, currentCurrency, requestedCurrency string, currentBalance float32) (
-		float32, error)
 	Idempotency(ctx context.Context, key string) error
 }
 
@@ -46,14 +54,14 @@ func NewHandler(service WalletService, log *logrus.Logger) *Handler {
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var wallet models.RequestWalletInstance
 
-	wallet.WalletID = uuid.New()
-
 	err := json.NewDecoder(r.Body).Decode(&wallet)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 
 		return
 	}
+
+	wallet.WalletID = uuid.New()
 
 	err = h.service.Idempotency(r.Context(), wallet.TransactionKey.String())
 	if err != nil {
@@ -78,7 +86,19 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getList(w http.ResponseWriter, r *http.Request) {
-	walletsList, err := h.service.GetWalletsList(r.Context())
+	params := models.ListingQueryParams{}
+	params.TextFilter = r.URL.Query().Get("textFilter")
+
+	params.ItemsPerPage, _ = strconv.Atoi(r.URL.Query().Get("itemsPerPage"))
+	if params.ItemsPerPage == 0 {
+		params.ItemsPerPage = defaultLimit
+	}
+
+	params.Offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
+	params.Sorting = r.URL.Query().Get("sorting")
+	params.Descending, _ = strconv.ParseBool(r.URL.Query().Get("descending"))
+
+	walletsList, err := h.service.GetWalletsList(r.Context(), params)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 
@@ -106,6 +126,46 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	err = json.NewEncoder(w).Encode(wallet)
+	if err != nil {
+		h.log.Warningf("json.NewEncoder.Encode: %s", err)
+	}
+}
+
+func (h *Handler) getHistory(w http.ResponseWriter, r *http.Request) {
+	params := models.RequestWalletHistory{}
+	params.TextFilter = r.URL.Query().Get("textFilter")
+
+	params.ItemsPerPage, _ = strconv.Atoi(r.URL.Query().Get("itemsPerPage"))
+	if params.ItemsPerPage == 0 {
+		params.ItemsPerPage = defaultLimit
+	}
+
+	params.PeriodStart = time.Now().Add(-defaultTimeRange * time.Hour)
+	if r.URL.Query().Get("periodStart") != "" {
+		params.PeriodStart, _ = time.Parse(timeFormatLayout, r.URL.Query().Get("periodStart"))
+	}
+
+	params.PeriodEnd = time.Now()
+	if r.URL.Query().Get("periodEnd") != "" {
+		params.PeriodEnd, _ = time.Parse(timeFormatLayout, r.URL.Query().Get("periodEnd"))
+	}
+
+	params.Offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
+	params.Sorting = r.URL.Query().Get("sorting")
+	params.Descending, _ = strconv.ParseBool(r.URL.Query().Get("descending"))
+
+	id := chi.URLParam(r, "id")
+
+	walletHistory, err := h.service.GetWalletHistory(r.Context(), id, params)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	err = json.NewEncoder(w).Encode(walletHistory)
 	if err != nil {
 		h.log.Warningf("json.NewEncoder.Encode: %s", err)
 	}
@@ -179,7 +239,7 @@ func (h *Handler) deposit(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	updatedWallet, err := h.service.DepositFunds(r.Context(), id, depositFunds)
-	if err != nil && (errors.Is(err, walletservice.ErrInvalidCurrency) || errors.Is(err, postgres.ErrWalletNotFound)) {
+	if err != nil && (errors.Is(err, walletservice.ErrCurrencyNotValid) || errors.Is(err, postgres.ErrWalletNotFound)) {
 		w.WriteHeader(http.StatusNotFound)
 
 		return
@@ -219,7 +279,7 @@ func (h *Handler) withdraw(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	updatedWallet, err := h.service.WithdrawFunds(r.Context(), id, withdrawFunds)
-	if err != nil && (errors.Is(err, walletservice.ErrInvalidCurrency) || errors.Is(err, postgres.ErrWalletNotFound)) {
+	if err != nil && (errors.Is(err, walletservice.ErrCurrencyNotValid) || errors.Is(err, postgres.ErrWalletNotFound)) {
 		w.WriteHeader(http.StatusNotFound)
 
 		return
@@ -264,7 +324,7 @@ func (h *Handler) transfer(w http.ResponseWriter, r *http.Request) {
 	idDst := chi.URLParam(r, "idDst")
 
 	dstWallet, err := h.service.TransferFunds(r.Context(), idSrc, idDst, transferFunds)
-	if err != nil && (errors.Is(err, walletservice.ErrInvalidCurrency) || errors.Is(err, postgres.ErrWalletNotFound)) {
+	if err != nil && (errors.Is(err, walletservice.ErrCurrencyNotValid) || errors.Is(err, postgres.ErrWalletNotFound)) {
 		w.WriteHeader(http.StatusNotFound)
 
 		return

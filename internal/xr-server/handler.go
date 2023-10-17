@@ -25,7 +25,6 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 
 	currentRate, err := h.service.GetCurrentRate(from, to)
 	if err != nil {
-		h.log.Warningf("service.GetCurrentRate: %s", err)
 		w.WriteHeader(http.StatusNotFound)
 
 		return
