@@ -51,3 +51,8 @@ type ResponseWalletHistory struct {
 	Created   time.Time `json:"created"`
 	Operation string    `json:"operation"`
 }
+
+type SessionInfo struct {
+	UUID  string
+	Email string
+}
