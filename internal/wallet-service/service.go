@@ -295,7 +295,7 @@ func (s *Service) ConvertCurrency(ctx context.Context, currentCurrency, requeste
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return 0, fmt.Errorf("http.NewRequest: %w", err)
+		return 0, fmt.Errorf("http.NewRequestWithContext: %w", err)
 	}
 
 	request.Header.Set("Content-Type", "application/json")

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/AlexZav1327/service/internal/models"
-	"github.com/AlexZav1327/service/internal/postgres"
 	walletservice "github.com/AlexZav1327/service/internal/wallet-service"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -154,7 +153,14 @@ func (h *Handler) getHistory(w http.ResponseWriter, r *http.Request) {
 	params.Sorting = r.URL.Query().Get("sorting")
 	params.Descending, _ = strconv.ParseBool(r.URL.Query().Get("descending"))
 
-	id := chi.URLParam(r, "id")
+	sessionInfo, ok := h.getSessionInfo(w, r)
+	if !ok {
+		h.log.Warning("getSessionInfo")
+
+		return
+	}
+
+	id := sessionInfo.UUID
 
 	walletHistory, err := h.service.GetWalletHistory(r.Context(), id, params)
 	if err != nil {
@@ -239,7 +245,7 @@ func (h *Handler) deposit(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	updatedWallet, err := h.service.DepositFunds(r.Context(), id, depositFunds)
-	if err != nil && (errors.Is(err, walletservice.ErrCurrencyNotValid) || errors.Is(err, postgres.ErrWalletNotFound)) {
+	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 
 		return
@@ -279,12 +285,14 @@ func (h *Handler) withdraw(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	updatedWallet, err := h.service.WithdrawFunds(r.Context(), id, withdrawFunds)
-	if err != nil && (errors.Is(err, walletservice.ErrCurrencyNotValid) || errors.Is(err, postgres.ErrWalletNotFound)) {
-		w.WriteHeader(http.StatusNotFound)
+	if errors.Is(err, walletservice.ErrOverdraft) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
 
 		return
-	} else if err != nil && errors.Is(err, walletservice.ErrOverdraft) {
-		w.WriteHeader(http.StatusUnprocessableEntity)
+	}
+
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
 
 		return
 	}
@@ -324,12 +332,14 @@ func (h *Handler) transfer(w http.ResponseWriter, r *http.Request) {
 	idDst := chi.URLParam(r, "idDst")
 
 	dstWallet, err := h.service.TransferFunds(r.Context(), idSrc, idDst, transferFunds)
-	if err != nil && (errors.Is(err, walletservice.ErrCurrencyNotValid) || errors.Is(err, postgres.ErrWalletNotFound)) {
-		w.WriteHeader(http.StatusNotFound)
+	if errors.Is(err, walletservice.ErrOverdraft) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
 
 		return
-	} else if err != nil && errors.Is(err, walletservice.ErrOverdraft) {
-		w.WriteHeader(http.StatusUnprocessableEntity)
+	}
+
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
 
 		return
 	}
@@ -340,4 +350,15 @@ func (h *Handler) transfer(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.log.Warningf("json.NewEncoder.Encode: %s", err)
 	}
+}
+
+func (*Handler) getSessionInfo(w http.ResponseWriter, r *http.Request) (models.SessionInfo, bool) {
+	sessionInfo, ok := r.Context().Value(models.SessionInfo{}).(models.SessionInfo)
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+
+		return models.SessionInfo{}, false
+	}
+
+	return sessionInfo, true
 }

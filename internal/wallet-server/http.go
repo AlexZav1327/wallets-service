@@ -23,18 +23,19 @@ func New(host string, port int, service WalletService, log *logrus.Logger) *Serv
 	server := Server{
 		host:    host,
 		port:    port,
-		log:     log.WithField("module", "http"),
 		service: service,
+		log:     log.WithField("module", "http"),
 	}
 
 	h := NewHandler(service, log)
 	r := chi.NewRouter()
 
+	r.Use(h.JwtAuth)
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/wallet/create", h.create)
 		r.Get("/wallet/{id}", h.get)
 		r.Get("/wallets", h.getList)
-		r.Get("/wallet/{id}/history", h.getHistory)
+		r.Get("/wallet/history", h.getHistory)
 		r.Patch("/wallet/{id}", h.update)
 		r.Delete("/wallet/{id}", h.delete)
 		r.Put("/wallet/{id}/deposit", h.deposit)
