@@ -6,7 +6,10 @@ import (
 	"fmt"
 
 	walletmodel "github.com/AlexZav1327/service/internal/models"
+	"github.com/google/uuid"
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -36,8 +39,8 @@ const (
 	WHERE wallet_id = $1
 	RETURNING wallet_id, owner, currency, balance, created_at, updated_at;
 	`
-	checkTransactionKeyQuery = `
-	INSERT INTO idempotency (transaction_key) 
+	verifyTransactKeyQuery = `
+	INSERT INTO idempotency (transaction_key)
 	VALUES ($1)
 	`
 	walletID      = "wallet_id"
@@ -49,16 +52,44 @@ const (
 	operationType = "operation_type"
 )
 
-var ErrWalletNotFound = errors.New("no such wallet")
+var (
+	ErrWalletNotFound       = errors.New("no such wallet")
+	ErrRequestNotIdempotent = errors.New("non-idempotent request")
+	ErrNoWalletToDelete     = errors.New("no wallet found to delete")
+)
+
+type querier interface {
+	Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, query string, args ...any) pgx.Row
+}
 
 func (p *Postgres) CreateWallet(ctx context.Context, wallet walletmodel.RequestWalletInstance) (
 	walletmodel.ResponseWalletInstance, error,
 ) {
-	row := p.db.QueryRow(ctx, createWalletQuery, wallet.WalletID, wallet.Owner, wallet.Currency)
+	tx, err := p.db.Begin(ctx)
+	if err != nil {
+		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("db.Begin: %w", err)
+	}
+
+	defer func() {
+		if err != nil {
+			err = tx.Rollback(ctx)
+			if err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+				p.log.Warningf("tx.Rollback: %s", err)
+			}
+		}
+	}()
+
+	err = p.idempotency(ctx, tx, wallet.TransactionKey.String())
+	if err != nil {
+		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("idempotency: %w", err)
+	}
+
+	row := tx.QueryRow(ctx, createWalletQuery, wallet.WalletID, wallet.Owner, wallet.Currency)
 
 	var createdWallet walletmodel.ResponseWalletInstance
 
-	err := row.Scan(
+	err = row.Scan(
 		&createdWallet.WalletID,
 		&createdWallet.Owner,
 		&createdWallet.Currency,
@@ -67,11 +98,12 @@ func (p *Postgres) CreateWallet(ctx context.Context, wallet walletmodel.RequestW
 		&createdWallet.Updated,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return walletmodel.ResponseWalletInstance{}, ErrWalletNotFound
-		}
-
 		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("row.Scan: %w", err)
+	}
+
+	err = tx.Commit(ctx)
+	if err != nil {
+		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("tx.Commit: %w", err)
 	}
 
 	return createdWallet, nil
@@ -246,18 +278,18 @@ func (p *Postgres) DeleteWallet(ctx context.Context, id string) error {
 	}
 
 	if commandTag.RowsAffected() != 1 {
-		return ErrWalletNotFound
+		return ErrNoWalletToDelete
 	}
 
 	return nil
 }
 
-func (p *Postgres) ManageBalance(ctx context.Context, id string, balance float32) (
+func (p *Postgres) ManageBalance(ctx context.Context, key uuid.UUID, id string, balance float32) (
 	walletmodel.ResponseWalletInstance, error,
 ) {
 	tx, err := p.db.Begin(ctx)
 	if err != nil {
-		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("db.BeginTx: %w", err)
+		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("db.Begin: %w", err)
 	}
 
 	defer func() {
@@ -269,7 +301,12 @@ func (p *Postgres) ManageBalance(ctx context.Context, id string, balance float32
 		}
 	}()
 
-	updatedWallet, err := p.queryRowToWallet(ctx, manageFundsQuery, id, balance)
+	err = p.idempotency(ctx, tx, key.String())
+	if err != nil {
+		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("idempotency: %w", err)
+	}
+
+	updatedWallet, err := p.queryRowToWallet(ctx, tx, manageFundsQuery, id, balance)
 
 	err = tx.Commit(ctx)
 	if err != nil {
@@ -279,11 +316,12 @@ func (p *Postgres) ManageBalance(ctx context.Context, id string, balance float32
 	return updatedWallet, nil
 }
 
-func (p *Postgres) TransferFunds(ctx context.Context, idSrc, idDst string, balanceSrc, balanceDst float32,
+func (p *Postgres) TransferFunds(ctx context.Context, key uuid.UUID, idSrc, idDst string, balanceSrc,
+	balanceDst float32,
 ) (walletmodel.ResponseWalletInstance, error) {
 	tx, err := p.db.Begin(ctx)
 	if err != nil {
-		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("db.BeginTx: %w", err)
+		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("db.Begin: %w", err)
 	}
 
 	defer func() {
@@ -295,9 +333,14 @@ func (p *Postgres) TransferFunds(ctx context.Context, idSrc, idDst string, balan
 		}
 	}()
 
-	_, err = p.queryRowToWallet(ctx, manageFundsQuery, idSrc, balanceSrc)
+	err = p.idempotency(ctx, tx, key.String())
+	if err != nil {
+		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("idempotency: %w", err)
+	}
 
-	dstWallet, err := p.queryRowToWallet(ctx, manageFundsQuery, idDst, balanceDst)
+	_, err = p.queryRowToWallet(ctx, tx, manageFundsQuery, idSrc, balanceSrc)
+
+	dstWallet, err := p.queryRowToWallet(ctx, tx, manageFundsQuery, idDst, balanceDst)
 
 	err = tx.Commit(ctx)
 	if err != nil {
@@ -307,25 +350,28 @@ func (p *Postgres) TransferFunds(ctx context.Context, idSrc, idDst string, balan
 	return dstWallet, nil
 }
 
-func (p *Postgres) Idempotency(ctx context.Context, key string) error {
-	row := p.db.QueryRow(ctx, checkTransactionKeyQuery, key)
+func (p *Postgres) idempotency(ctx context.Context, q querier, key string) error {
+	_, err := q.Exec(ctx, verifyTransactKeyQuery, key)
 
-	err := row.Scan()
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
+	var pgErr *pgconn.PgError
+
+	if errors.As(err, &pgErr) {
+		if pgerrcode.UniqueViolation == pgErr.SQLState() {
+			return ErrRequestNotIdempotent
 		}
+	}
 
-		return fmt.Errorf("row.Scan: %w", err)
+	if err != nil {
+		return fmt.Errorf("exec: %w", err)
 	}
 
 	return nil
 }
 
-func (p *Postgres) queryRowToWallet(ctx context.Context, query, id string, balance float32) (
+func (p *Postgres) queryRowToWallet(ctx context.Context, tx pgx.Tx, query, id string, balance float32) (
 	walletmodel.ResponseWalletInstance, error,
 ) {
-	row := p.db.QueryRow(ctx, query, id, balance)
+	row := tx.QueryRow(ctx, query, id, balance)
 
 	var wallet walletmodel.ResponseWalletInstance
 

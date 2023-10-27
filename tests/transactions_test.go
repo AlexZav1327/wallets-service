@@ -221,7 +221,7 @@ func (s *IntegrationTestSuite) TestWithdraw() {
 		reqWithdraw := models.FundsOperations{}
 		reqWithdraw.TransactionKey = reqDeposit.TransactionKey
 		reqWithdraw.Currency = "RUB"
-		reqWithdraw.Amount = 1200
+		reqWithdraw.Amount = 800
 
 		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+withdraw, reqWithdraw, nil)
 
@@ -343,7 +343,7 @@ func (s *IntegrationTestSuite) TestTransfer() {
 		reqSrcWallet := models.RequestWalletInstance{}
 		reqSrcWallet.TransactionKey = uuid.New()
 		reqSrcWallet.Owner = "Alex"
-		reqSrcWallet.Currency = "RUB"
+		reqSrcWallet.Currency = "EUR"
 
 		var respData models.ResponseWalletInstance
 
@@ -351,25 +351,40 @@ func (s *IntegrationTestSuite) TestTransfer() {
 
 		reqDeposit := models.FundsOperations{}
 		reqDeposit.TransactionKey = uuid.New()
-		reqDeposit.Currency = "RUB"
+		reqDeposit.Currency = "EUR"
 		reqDeposit.Amount = 10000
 
 		srcWalletIdEndpoint := respData.WalletID.String()
 		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+srcWalletIdEndpoint+deposit, reqDeposit, nil)
 
-		reqTransfer := models.FundsOperations{}
-		reqTransfer.TransactionKey = reqDeposit.TransactionKey
-		reqTransfer.Currency = "RUB"
-		reqTransfer.Amount = 9999
+		reqDstWallet := models.RequestWalletInstance{}
+		reqDstWallet.TransactionKey = uuid.New()
+		reqDstWallet.Owner = "Kate"
+		reqDstWallet.Currency = "EUR"
 
-		dstWalletEndpoint := uuid.New().String()
+		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, reqDstWallet, &respData)
+
+		reqTransfer := models.FundsOperations{}
+		reqTransfer.TransactionKey = uuid.New()
+		reqTransfer.Currency = "EUR"
+		reqTransfer.Amount = 3000
+
+		dstWalletEndpoint := respData.WalletID.String()
+		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+srcWalletIdEndpoint+transfer+dstWalletEndpoint,
+			reqTransfer, nil)
+
 		resp := s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+srcWalletIdEndpoint+transfer+dstWalletEndpoint,
 			reqTransfer, nil)
 
+		s.Require().Equal(http.StatusConflict, resp.StatusCode)
+
 		_ = s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+srcWalletIdEndpoint, nil, &respData)
 
-		s.Require().Equal(http.StatusConflict, resp.StatusCode)
-		s.Require().Equal(reqDeposit.Amount, respData.Balance)
+		s.Require().Equal(reqDeposit.Amount-reqTransfer.Amount, respData.Balance)
+
+		_ = s.sendRequest(ctx, http.MethodGet, url+walletEndpoint+dstWalletEndpoint, nil, &respData)
+
+		s.Require().Equal(reqTransfer.Amount, respData.Balance)
 	})
 
 	s.Run("transfer funds not valid destination wallet ID", func() {
