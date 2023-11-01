@@ -361,7 +361,7 @@ func (s *IntegrationTestSuite) TestWalletHistory() {
 		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, nil)
 
 		claimUUID := respData.WalletID.String()
-		claimEmail := "go-dev@mail.go"
+		claimEmail := "go-dev@email.go"
 
 		var respDataHistory []models.ResponseWalletHistory
 

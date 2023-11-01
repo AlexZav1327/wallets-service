@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/AlexZav1327/service/internal/postgres"
+	"github.com/AlexZav1327/service/internal/rates"
 	walletserver "github.com/AlexZav1327/service/internal/wallet-server"
 	walletservice "github.com/AlexZav1327/service/internal/wallet-service"
+	"github.com/golang-jwt/jwt/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	migrate "github.com/rubenv/sql-migrate"
 	"github.com/sirupsen/logrus"
@@ -20,11 +23,12 @@ import (
 
 const (
 	port                  = 5005
+	host                  = ""
 	createWalletEndpoint  = "/api/v1/wallet/create"
 	walletHistoryEndpoint = "/api/v1/wallet/history"
 	walletEndpoint        = "/api/v1/wallet/"
 	walletsEndpoint       = "/api/v1/wallets"
-	dsn                   = "user=user password=1234 host=localhost port=5432 dbname=postgres sslmode=disable"
+	dsn                   = "user=user password=secret host=localhost port=5432 dbname=postgres sslmode=disable"
 	deposit               = "/deposit"
 	withdraw              = "/withdraw"
 	transfer              = "/transfer/"
@@ -37,9 +41,15 @@ type IntegrationTestSuite struct {
 	pg            *postgres.Postgres
 	server        *walletserver.Server
 	walletService *walletservice.Service
+	xr            *rates.Rates
 }
 
 func (s *IntegrationTestSuite) SetupSuite() {
+	var (
+		signingKey      = os.Getenv("PRIVATE_SIGNING_KEY")
+		verificationKey = os.Getenv("PUBLIC_VERIFICATION_KEY")
+	)
+
 	ctx := context.Background()
 	logger := logrus.StandardLogger()
 
@@ -51,9 +61,17 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	err = s.pg.Migrate(migrate.Up)
 	s.Require().NoError(err)
 
-	s.walletService = walletservice.New(s.pg, logger)
+	s.xr = rates.New(logger)
 
-	s.server = walletserver.New("", port, s.walletService, logger)
+	s.walletService = walletservice.New(s.pg, s.xr, logger)
+
+	privateKey, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(signingKey))
+	s.Require().NoError(err)
+
+	publicKey, err := jwt.ParseRSAPublicKeyFromPEM([]byte(verificationKey))
+	s.Require().NoError(err)
+
+	s.server = walletserver.New(host, port, s.walletService, logger, privateKey, publicKey)
 
 	go func() {
 		_ = s.server.Run(ctx)
@@ -92,7 +110,7 @@ func (s *IntegrationTestSuite) sendRequest(ctx context.Context, method, endpoint
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(reqBody))
 	s.Require().NoError(err)
 
-	token, err := walletserver.GenerateToken("", "")
+	token, err := s.server.GenerateToken("", "")
 	s.Require().NoError(err)
 
 	bearer := fmt.Sprintf("Bearer %s", token)
@@ -127,7 +145,7 @@ func (s *IntegrationTestSuite) sendRequestWithCustomClaims(ctx context.Context, 
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(reqBody))
 	s.Require().NoError(err)
 
-	token, err := walletserver.GenerateToken(claimUUID, claimEmail)
+	token, err := s.server.GenerateToken(claimUUID, claimEmail)
 	s.Require().NoError(err)
 
 	bearer := fmt.Sprintf("Bearer %s", token)

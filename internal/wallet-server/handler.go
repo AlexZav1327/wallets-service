@@ -2,6 +2,7 @@ package walletserver
 
 import (
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AlexZav1327/service/internal/models"
+	"github.com/AlexZav1327/service/internal/postgres"
 	walletservice "github.com/AlexZav1327/service/internal/wallet-service"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -22,8 +24,11 @@ const (
 )
 
 type Handler struct {
-	service WalletService
-	log     *logrus.Entry
+	service    WalletService
+	log        *logrus.Entry
+	metrics    *metrics
+	privateKey *rsa.PrivateKey
+	publicKey  *rsa.PublicKey
 }
 
 type WalletService interface {
@@ -40,13 +45,17 @@ type WalletService interface {
 		models.ResponseWalletInstance, error)
 	TransferFunds(ctx context.Context, idSrc, idDst string, transferFunds models.FundsOperations) (
 		models.ResponseWalletInstance, error)
-	Idempotency(ctx context.Context, key string) error
 }
 
-func NewHandler(service WalletService, log *logrus.Logger) *Handler {
+func NewHandler(service WalletService, log *logrus.Logger, privateKey *rsa.PrivateKey,
+	publicKey *rsa.PublicKey,
+) *Handler {
 	return &Handler{
-		service: service,
-		log:     log.WithField("module", "handler"),
+		service:    service,
+		log:        log.WithField("module", "handler"),
+		metrics:    newMetrics(),
+		privateKey: privateKey,
+		publicKey:  publicKey,
 	}
 }
 
@@ -62,16 +71,21 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 
 	wallet.WalletID = uuid.New()
 
-	err = h.service.Idempotency(r.Context(), wallet.TransactionKey.String())
-	if err != nil {
+	createdWallet, err := h.service.CreateWallet(r.Context(), wallet)
+	if errors.Is(err, postgres.ErrRequestNotIdempotent) {
 		w.WriteHeader(http.StatusConflict)
 
 		return
 	}
 
-	createdWallet, err := h.service.CreateWallet(r.Context(), wallet)
-	if err != nil {
+	if errors.Is(err, walletservice.ErrCurrencyNotValid) {
 		w.WriteHeader(http.StatusNotFound)
+
+		return
+	}
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 
 		return
 	}
@@ -99,7 +113,7 @@ func (h *Handler) getList(w http.ResponseWriter, r *http.Request) {
 
 	walletsList, err := h.service.GetWalletsList(r.Context(), params)
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		w.WriteHeader(http.StatusInternalServerError)
 
 		return
 	}
@@ -116,8 +130,14 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	wallet, err := h.service.GetWallet(r.Context(), id)
-	if err != nil {
+	if errors.Is(err, postgres.ErrWalletNotFound) {
 		w.WriteHeader(http.StatusNotFound)
+
+		return
+	}
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 
 		return
 	}
@@ -153,9 +173,9 @@ func (h *Handler) getHistory(w http.ResponseWriter, r *http.Request) {
 	params.Sorting = r.URL.Query().Get("sorting")
 	params.Descending, _ = strconv.ParseBool(r.URL.Query().Get("descending"))
 
-	sessionInfo, ok := h.getSessionInfo(w, r)
+	sessionInfo, ok := h.getSessionInfo(r)
 	if !ok {
-		h.log.Warning("getSessionInfo")
+		w.WriteHeader(http.StatusInternalServerError)
 
 		return
 	}
@@ -164,7 +184,7 @@ func (h *Handler) getHistory(w http.ResponseWriter, r *http.Request) {
 
 	walletHistory, err := h.service.GetWalletHistory(r.Context(), id, params)
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		w.WriteHeader(http.StatusInternalServerError)
 
 		return
 	}
@@ -192,8 +212,14 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	wallet.WalletID = uuid.MustParse(id)
 
 	updatedWallet, err := h.service.UpdateWallet(r.Context(), wallet)
-	if err != nil {
+	if errors.Is(err, walletservice.ErrCurrencyNotValid) || errors.Is(err, postgres.ErrWalletNotFound) {
 		w.WriteHeader(http.StatusNotFound)
+
+		return
+	}
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 
 		return
 	}
@@ -210,8 +236,14 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	err := h.service.DeleteWallet(r.Context(), id)
-	if err != nil {
+	if errors.Is(err, postgres.ErrNoWalletToDelete) {
 		w.WriteHeader(http.StatusNotFound)
+
+		return
+	}
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 
 		return
 	}
@@ -229,13 +261,6 @@ func (h *Handler) deposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.service.Idempotency(r.Context(), depositFunds.TransactionKey.String())
-	if err != nil {
-		w.WriteHeader(http.StatusConflict)
-
-		return
-	}
-
 	if depositFunds.Amount <= 0 {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 
@@ -245,8 +270,20 @@ func (h *Handler) deposit(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	updatedWallet, err := h.service.DepositFunds(r.Context(), id, depositFunds)
-	if err != nil {
+	if errors.Is(err, postgres.ErrRequestNotIdempotent) {
+		w.WriteHeader(http.StatusConflict)
+
+		return
+	}
+
+	if errors.Is(err, walletservice.ErrCurrencyNotValid) || errors.Is(err, postgres.ErrWalletNotFound) {
 		w.WriteHeader(http.StatusNotFound)
+
+		return
+	}
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 
 		return
 	}
@@ -269,13 +306,6 @@ func (h *Handler) withdraw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.service.Idempotency(r.Context(), withdrawFunds.TransactionKey.String())
-	if err != nil {
-		w.WriteHeader(http.StatusConflict)
-
-		return
-	}
-
 	if withdrawFunds.Amount <= 0 {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 
@@ -291,8 +321,20 @@ func (h *Handler) withdraw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err != nil {
+	if errors.Is(err, postgres.ErrRequestNotIdempotent) {
+		w.WriteHeader(http.StatusConflict)
+
+		return
+	}
+
+	if errors.Is(err, walletservice.ErrCurrencyNotValid) || errors.Is(err, postgres.ErrWalletNotFound) {
 		w.WriteHeader(http.StatusNotFound)
+
+		return
+	}
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 
 		return
 	}
@@ -315,13 +357,6 @@ func (h *Handler) transfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.service.Idempotency(r.Context(), transferFunds.TransactionKey.String())
-	if err != nil {
-		w.WriteHeader(http.StatusConflict)
-
-		return
-	}
-
 	if transferFunds.Amount <= 0 {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 
@@ -338,8 +373,20 @@ func (h *Handler) transfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err != nil {
+	if errors.Is(err, postgres.ErrRequestNotIdempotent) {
+		w.WriteHeader(http.StatusConflict)
+
+		return
+	}
+
+	if errors.Is(err, walletservice.ErrCurrencyNotValid) || errors.Is(err, postgres.ErrWalletNotFound) {
 		w.WriteHeader(http.StatusNotFound)
+
+		return
+	}
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 
 		return
 	}
@@ -352,10 +399,10 @@ func (h *Handler) transfer(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (*Handler) getSessionInfo(w http.ResponseWriter, r *http.Request) (models.SessionInfo, bool) {
+func (h *Handler) getSessionInfo(r *http.Request) (models.SessionInfo, bool) {
 	sessionInfo, ok := r.Context().Value(models.SessionInfo{}).(models.SessionInfo)
 	if !ok {
-		w.WriteHeader(http.StatusInternalServerError)
+		h.log.Warning("err invalid context value")
 
 		return models.SessionInfo{}, false
 	}

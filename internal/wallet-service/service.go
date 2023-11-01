@@ -2,13 +2,13 @@ package walletservice
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"net/http"
+	"time"
 
 	"github.com/AlexZav1327/service/internal/models"
+	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
 
@@ -24,8 +24,10 @@ var (
 )
 
 type Service struct {
-	pg  WalletStore
-	log *logrus.Entry
+	pg      WalletStore
+	xr      ExchangeRates
+	log     *logrus.Entry
+	metrics *metrics
 }
 
 type WalletStore interface {
@@ -36,16 +38,22 @@ type WalletStore interface {
 		[]models.ResponseWalletHistory, error)
 	UpdateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
 	DeleteWallet(ctx context.Context, id string) error
-	ManageBalance(ctx context.Context, id string, balance float32) (models.ResponseWalletInstance, error)
-	TransferFunds(ctx context.Context, idSrc, idDst string, balanceSrc, balanceDst float32) (
+	ManageBalance(ctx context.Context, transactionKey uuid.UUID, id string, balance float32) (
 		models.ResponseWalletInstance, error)
-	Idempotency(ctx context.Context, id string) error
+	TransferFunds(ctx context.Context, transactionKey uuid.UUID, idSrc, idDst string, balanceSrc, balanceDst float32) (
+		models.ResponseWalletInstance, error)
 }
 
-func New(pg WalletStore, log *logrus.Logger) *Service {
+type ExchangeRates interface {
+	GetRate(ctx context.Context, currentCurrency, requestedCurrency string) (models.ExchangeRate, error)
+}
+
+func New(pg WalletStore, xr ExchangeRates, log *logrus.Logger) *Service {
 	return &Service{
-		pg:  pg,
-		log: log.WithField("module", "service"),
+		pg:      pg,
+		xr:      xr,
+		log:     log.WithField("module", "service"),
+		metrics: newMetrics(),
 	}
 }
 
@@ -57,10 +65,17 @@ func (s *Service) CreateWallet(ctx context.Context, wallet models.RequestWalletI
 		return models.ResponseWalletInstance{}, ErrCurrencyNotValid
 	}
 
+	started := time.Now()
+	defer func() {
+		s.metrics.duration.WithLabelValues("create_wallet").Observe(time.Since(started).Seconds())
+	}()
+
 	createdWallet, err := s.pg.CreateWallet(ctx, wallet)
 	if err != nil {
 		return models.ResponseWalletInstance{}, fmt.Errorf("pg.CreateWallet: %w", err)
 	}
+
+	s.metrics.wallets.Inc()
 
 	return createdWallet, nil
 }
@@ -77,6 +92,11 @@ func (s *Service) GetWalletsList(ctx context.Context, params models.ListingQuery
 }
 
 func (s *Service) GetWallet(ctx context.Context, id string) (models.ResponseWalletInstance, error) {
+	started := time.Now()
+	defer func() {
+		s.metrics.duration.WithLabelValues("get_wallet").Observe(time.Since(started).Seconds())
+	}()
+
 	wallet, err := s.pg.GetWallet(ctx, id)
 	if err != nil {
 		return models.ResponseWalletInstance{}, fmt.Errorf("pg.GetWallet: %w", err)
@@ -122,6 +142,11 @@ func (s *Service) UpdateWallet(ctx context.Context, wallet models.RequestWalletI
 		}
 	}
 
+	started := time.Now()
+	defer func() {
+		s.metrics.duration.WithLabelValues("update_wallet").Observe(time.Since(started).Seconds())
+	}()
+
 	updatedWallet, err := s.pg.UpdateWallet(ctx, wallet)
 	if err != nil {
 		return models.ResponseWalletInstance{}, fmt.Errorf("pg.UpdateWallet: %w", err)
@@ -131,10 +156,17 @@ func (s *Service) UpdateWallet(ctx context.Context, wallet models.RequestWalletI
 }
 
 func (s *Service) DeleteWallet(ctx context.Context, id string) error {
+	started := time.Now()
+	defer func() {
+		s.metrics.duration.WithLabelValues("delete_wallet").Observe(time.Since(started).Seconds())
+	}()
+
 	err := s.pg.DeleteWallet(ctx, id)
 	if err != nil {
 		return fmt.Errorf("pg.DeleteWallet: %w", err)
 	}
+
+	s.metrics.deletedWallets.Inc()
 
 	return nil
 }
@@ -168,10 +200,17 @@ func (s *Service) DepositFunds(ctx context.Context, id string, depositFunds mode
 		balance = currentWallet.Balance + convertedDepositAmount
 	}
 
-	updatedWallet, err := s.pg.ManageBalance(ctx, id, balance)
+	started := time.Now()
+	defer func() {
+		s.metrics.duration.WithLabelValues("deposit").Observe(time.Since(started).Seconds())
+	}()
+
+	updatedWallet, err := s.pg.ManageBalance(ctx, depositFunds.TransactionKey, id, balance)
 	if err != nil {
 		return models.ResponseWalletInstance{}, fmt.Errorf("pg.ManageFunds: %w", err)
 	}
+
+	s.metrics.funds.WithLabelValues(depositFunds.Currency).Add(float64(depositFunds.Amount))
 
 	return updatedWallet, nil
 }
@@ -209,10 +248,17 @@ func (s *Service) WithdrawFunds(ctx context.Context, id string, withdrawFunds mo
 		return models.ResponseWalletInstance{}, ErrOverdraft
 	}
 
-	updatedWallet, err := s.pg.ManageBalance(ctx, id, balance)
+	started := time.Now()
+	defer func() {
+		s.metrics.duration.WithLabelValues("withdraw").Observe(time.Since(started).Seconds())
+	}()
+
+	updatedWallet, err := s.pg.ManageBalance(ctx, withdrawFunds.TransactionKey, id, balance)
 	if err != nil {
 		return models.ResponseWalletInstance{}, fmt.Errorf("pg.ManageFunds: %w", err)
 	}
+
+	s.metrics.funds.WithLabelValues(withdrawFunds.Currency).Sub(float64(withdrawFunds.Amount))
 
 	return updatedWallet, nil
 }
@@ -233,10 +279,7 @@ func (s *Service) TransferFunds(ctx context.Context, idSrc, idDst string, transf
 	balanceSrc := currentSrcWallet.Balance - transferFunds.Amount
 
 	if transferFunds.Currency != currentSrcWallet.Currency {
-		convertedWithdrawAmount, err := s.ConvertCurrency(
-			ctx,
-			transferFunds.Currency,
-			currentSrcWallet.Currency,
+		convertedWithdrawAmount, err := s.ConvertCurrency(ctx, transferFunds.Currency, currentSrcWallet.Currency,
 			transferFunds.Amount,
 		)
 		if err != nil {
@@ -258,10 +301,7 @@ func (s *Service) TransferFunds(ctx context.Context, idSrc, idDst string, transf
 	balanceDst := currentDstWallet.Balance + transferFunds.Amount
 
 	if transferFunds.Currency != currentDstWallet.Currency {
-		convertedDepositAmount, err := s.ConvertCurrency(
-			ctx,
-			transferFunds.Currency,
-			currentDstWallet.Currency,
+		convertedDepositAmount, err := s.ConvertCurrency(ctx, transferFunds.Currency, currentDstWallet.Currency,
 			transferFunds.Amount,
 		)
 		if err != nil {
@@ -271,7 +311,12 @@ func (s *Service) TransferFunds(ctx context.Context, idSrc, idDst string, transf
 		balanceDst = currentDstWallet.Balance + convertedDepositAmount
 	}
 
-	updatedWallet, err := s.pg.TransferFunds(ctx, idSrc, idDst, balanceSrc, balanceDst)
+	started := time.Now()
+	defer func() {
+		s.metrics.duration.WithLabelValues("transfer").Observe(time.Since(started).Seconds())
+	}()
+
+	updatedWallet, err := s.pg.TransferFunds(ctx, transferFunds.TransactionKey, idSrc, idDst, balanceSrc, balanceDst)
 	if err != nil {
 		return models.ResponseWalletInstance{}, fmt.Errorf("pg.TransferFunds: %w", err)
 	}
@@ -279,44 +324,12 @@ func (s *Service) TransferFunds(ctx context.Context, idSrc, idDst string, transf
 	return updatedWallet, nil
 }
 
-func (s *Service) Idempotency(ctx context.Context, key string) error {
-	err := s.pg.Idempotency(ctx, key)
-	if err != nil {
-		return fmt.Errorf("pg.CheckIdempotency: %w", err)
-	}
-
-	return nil
-}
-
 func (s *Service) ConvertCurrency(ctx context.Context, currentCurrency, requestedCurrency string,
 	currentBalance float32,
 ) (float32, error) {
-	endpoint := fmt.Sprintf("http://localhost:8091/api/v1/xr?from=%s&to=%s", currentCurrency, requestedCurrency)
-
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	rates, err := s.xr.GetRate(ctx, currentCurrency, requestedCurrency)
 	if err != nil {
-		return 0, fmt.Errorf("http.NewRequestWithContext: %w", err)
-	}
-
-	request.Header.Set("Content-Type", "application/json")
-
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return 0, fmt.Errorf("http.DefaultClient.Do: %w", err)
-	}
-
-	defer func() {
-		err = response.Body.Close()
-		if err != nil {
-			s.log.Warningf("resp.Body.Close: %s", err)
-		}
-	}()
-
-	var rates models.ExchangeRate
-
-	err = json.NewDecoder(response.Body).Decode(&rates)
-	if err != nil {
-		return 0, fmt.Errorf("json.NewDecoder.Decode: %w", err)
+		return 0, fmt.Errorf("xr.GetRate: %w", err)
 	}
 
 	convertedBalance := float32(math.Round(float64(currentBalance*rates.Bid*100)) / 100)
