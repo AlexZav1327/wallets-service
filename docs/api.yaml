@@ -1,0 +1,456 @@
+openapi: 3.0.3
+info:
+  title: Wallets service
+  description: Service offers numerous options for managing wallets.
+  contact:
+    email: alexey.zarapin@gmail.com
+  version: 0.0.1
+servers:
+  - url: http://localhost:8080/api/v1
+paths:
+  /wallet/create:
+    post:
+      summary: Create a new wallet
+      security:
+        - BearerAuth: []
+      description: Returns the created wallet
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReqWallet'
+      responses:
+        '201':
+          description: A RespWallet object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespWallet'
+        '400':
+          description: Bad request; transactionKey must be uuid, owner and currency must be string
+        '401':
+          description: Authorization information is missing or invalid
+        '404':
+          description: A currency is not valid
+        '409':
+          description: The request is duplicated (non-idempotent request)
+        '5XX':
+          description: Unexpected error
+  /wallet/{id}:
+    get:
+      summary: Find wallet by ID
+      security:
+        - BearerAuth: []
+      description: Returns a single wallet
+      parameters:
+        - name: id
+          in: path
+          description: ID of wallet to return
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: A RespWallet object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespWallet'
+        '400':
+          description: Bad request; walletId must be uuid
+        '401':
+          description: Authorization information is missing or invalid
+        '404':
+          description: The wallet was not found
+        '5XX':
+          description: Unexpected error
+  /wallets:
+    get:
+      summary: Find wallets by filters
+      security:
+        - BearerAuth: []
+      description: Returns list of wallets
+      parameters:
+        - name: textFilter
+          in: query
+          description: Returns wallets that contain the characters specified in the text filter
+          required: false
+          schema:
+            type: string
+        - name: itemsPerPage
+          in: query
+          description: How many wallets can be contained in the response
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 20
+        - name: offset
+          in: query
+          description: Excludes from a response the first N wallets
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: sorting
+          in: query
+          description: Sorts wallets by the specified parameter
+          required: false
+          schema:
+            type: string
+        - name: descending
+          in: query
+          description: Sorts wallets in the descending order
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: A WalletsList array
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletsList'
+        '401':
+          description: Authorization information is missing or invalid
+        '5XX':
+          description: Unexpected error
+  /wallet/history:
+    get:
+      summary: Find wallet's history by filter
+      security:
+        - BearerAuth: []
+      description: Returns list of wallet's operations by filter
+      parameters:
+        - name: textFilter
+          in: query
+          description: Returns operations that contain the characters specified in the text filter
+          required: false
+          schema:
+            type: string
+        - name: itemsPerPage
+          in: query
+          description: How many operations can be contained in the response
+          required: false
+          schema:
+            type: integer
+            format: int64
+            default: 20
+        - name: offset
+          in: query
+          description: Excludes from a response the first N operations
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: sorting
+          in: query
+          description: Sorts operations by the specified parameter
+          required: false
+          schema:
+            type: string
+        - name: descending
+          in: query
+          description: Sorts operations in the descending order
+          required: false
+          schema:
+            type: boolean
+        - name: periodStart
+          in: query
+          description: Sets the beginning of the covered period
+          required: false
+          schema:
+            type: string
+            format: time
+            example: 2023-10-17T14:21:01Z03
+            default: period in 24 hours
+        - name: periodEnd
+          in: query
+          description: Sets the end of the covered period
+          required: false
+          schema:
+            type: string
+            format: time
+            example: 2023-10-18T14:21:01Z03
+            default: now
+      responses:
+        '200':
+          description: A WalletHistory array
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletHistory'
+        '401':
+          description: Authorization information is missing or invalid
+        '5XX':
+          description: Unexpected error
+  /wallet/update/{id}:
+    patch:
+      summary: Update wallet's data
+      security:
+        - BearerAuth: []
+      description: Returns updated wallet
+      parameters:
+        - name: id
+          in: path
+          description: ID of wallet to return
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReqWallet'
+      responses:
+        '200':
+          description: A RespWallet object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespWallet'
+        '400':
+          description: Bad request; walletId must be uuid, owner and currency must be string
+        '401':
+          description: Authorization information is missing or invalid
+        '404':
+          description: The wallet was not found, a currency is not valid
+        '5XX':
+          description: Unexpected error
+  /wallet/delete/{id}:
+    delete:
+      summary: Delete wallet by ID
+      security:
+        - BearerAuth: []
+      description: Deletes wallet
+      parameters:
+        - name: id
+          in: path
+          description: ID of wallet to return
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: No content
+        '401':
+          description: Authorization information is missing or invalid
+        '404':
+          description: No wallet found to delete
+        '5XX':
+          description: Unexpected error
+  /wallet/{id}/deposit:
+    put:
+      summary: Deposit funds
+      security:
+        - BearerAuth: []
+      description: Depositing funds into the wallet
+      parameters:
+        - name: id
+          in: path
+          description: ID of wallet to return
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Transaction'
+      responses:
+        '200':
+          description: A RespWallet object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespWallet'
+        '400':
+          description: Bad request; transactionKey and walletId must be uuid, currency must be string, amount must be number
+        '401':
+          description: Authorization information is missing or invalid
+        '404':
+          description: The wallet was not found, a currency is not valid
+        '409':
+          description: The request is duplicated (non-idempotent request)
+        '422':
+          description: Deposit amount is less than or equal 0
+        '5XX':
+          description: Unexpected error
+  /wallet/{id}/withdraw:
+    put:
+      summary: Withdraw funds
+      security:
+        - BearerAuth: []
+      description: Withdrawal funds from the wallet
+      parameters:
+        - name: id
+          in: path
+          description: ID of wallet to return
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Transaction'
+      responses:
+        '200':
+          description: A RespWallet object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespWallet'
+        '400':
+          description: Bad request; transactionKey and walletId must be uuid, currency must be string, amount must be number
+        '401':
+          description: Authorization information is missing or invalid
+        '404':
+          description: The wallet was not found, a currency is not valid
+        '409':
+          description: The request is duplicated (non-idempotent request)
+        '422':
+          description: Overdraft or withdrawal amount is less than or equal 0
+        '5XX':
+          description: Unexpected error
+  /wallet/{idSrc}/transfer/{idDst}:
+    put:
+      summary: Transfer funds
+      security:
+        - BearerAuth: []
+      description: Transfer funds from one wallet to another
+      parameters:
+        - name: idSrc
+          in: path
+          description: ID of wallet from which funds are transferred
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: idDst
+          in: path
+          description: ID of wallet to which funds are transferred (also ID of wallet to return)
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Transaction'
+      responses:
+        '200':
+          description: A RespWallet object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespWallet'
+        '400':
+          description: Bad request; transactionKey and walletId must be uuid, currency must be string, amount must be number
+        '401':
+          description: Authorization information is missing or invalid
+        '404':
+          description: The wallet was not found, a currency is not valid
+        '409':
+          description: The request is duplicated (non-idempotent request)
+        '422':
+          description: Overdraft or transferred amount is less than or equal 0
+        '5XX':
+          description: Unexpected error
+components:
+  schemas:
+    ReqWallet:
+      type: object
+      properties:
+        transactionKey:
+          type: string
+          format: uuid
+          example: 76543210-3210-0123-3210-0123456789ab
+        owner:
+          type: string
+          example: Liza
+        currency:
+          type: string
+          example: USD
+    RespWallet:
+      type: object
+      properties:
+        walletId:
+          type: string
+          format: uuid
+          example: 76543210-3210-0123-3210-0123456789ab
+        owner:
+          type: string
+          example: Liza
+        currency:
+          type: string
+          example: USD
+        balance:
+          type: number
+          format: float32
+          example: 30000.55
+        created:
+          type: string
+          format: time
+          example: 2023-11-02T19:49:32+03:00
+        updated:
+          type: string
+          format: time
+          example: 2023-11-02T19:49:32+03:00
+    RespWalletHistory:
+      type: object
+      properties:
+        walletId:
+          type: string
+          format: uuid
+          example: 76543210-3210-0123-3210-0123456789ab
+        owner:
+          type: string
+          example: Liza
+        currency:
+          type: string
+          example: USD
+        balance:
+          type: number
+          format: float32
+          example: 30000.55
+        created:
+          type: string
+          format: time
+          example: 2023-11-02T19:49:32+03:00
+        operation:
+          type: string
+          example: UPDATE
+    WalletsList:
+      type: array
+      items:
+        $ref: '#/components/schemas/RespWallet'
+    WalletHistory:
+      type: array
+      items:
+        $ref: '#/components/schemas/RespWalletHistory'
+    Transaction:
+      type: object
+      properties:
+        transactionKey:
+          type: string
+          format: uuid
+          example: 76543210-3210-0123-3210-0123456789ab
+        currency:
+          type: string
+          example: USD
+        amount:
+          type: number
+          format: float32
+          example: 100.55
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

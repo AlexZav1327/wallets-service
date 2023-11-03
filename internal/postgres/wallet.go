@@ -56,6 +56,7 @@ var (
 	ErrWalletNotFound       = errors.New("no such wallet")
 	ErrRequestNotIdempotent = errors.New("non-idempotent request")
 	ErrNoWalletToDelete     = errors.New("no wallet found to delete")
+	ErrInvalidWalletID      = errors.New("invalid walletID for type uuid")
 )
 
 type querier interface {
@@ -167,6 +168,14 @@ func (p *Postgres) GetWallet(ctx context.Context, id string) (walletmodel.Respon
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return walletmodel.ResponseWalletInstance{}, ErrWalletNotFound
+		}
+
+		var pgErr *pgconn.PgError
+
+		if errors.As(err, &pgErr) {
+			if pgerrcode.InvalidTextRepresentation == pgErr.SQLState() {
+				return walletmodel.ResponseWalletInstance{}, ErrInvalidWalletID
+			}
 		}
 
 		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("row.Scan: %w", err)
