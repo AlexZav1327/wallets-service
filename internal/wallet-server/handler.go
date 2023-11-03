@@ -130,6 +130,12 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	wallet, err := h.service.GetWallet(r.Context(), id)
+	if errors.Is(err, postgres.ErrInvalidWalletID) {
+		w.WriteHeader(http.StatusBadRequest)
+
+		return
+	}
+
 	if errors.Is(err, postgres.ErrWalletNotFound) {
 		w.WriteHeader(http.StatusNotFound)
 

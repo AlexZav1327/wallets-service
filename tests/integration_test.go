@@ -24,11 +24,13 @@ import (
 const (
 	port                  = 5005
 	host                  = ""
+	dsn                   = "user=user password=secret host=localhost port=5432 dbname=postgres sslmode=disable"
 	createWalletEndpoint  = "/api/v1/wallet/create"
 	walletHistoryEndpoint = "/api/v1/wallet/history"
 	walletEndpoint        = "/api/v1/wallet/"
 	walletsEndpoint       = "/api/v1/wallets"
-	dsn                   = "user=user password=secret host=localhost port=5432 dbname=postgres sslmode=disable"
+	updateWalletEndpoint  = "/api/v1/wallet/update/"
+	deleteWalletEndpoint  = "/api/v1/wallet/delete/"
 	deposit               = "/deposit"
 	withdraw              = "/withdraw"
 	transfer              = "/transfer/"

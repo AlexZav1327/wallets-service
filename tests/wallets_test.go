@@ -110,7 +110,7 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 		reqUpdate.Owner = "Alex"
 		reqUpdate.Currency = "USD"
 
-		resp := s.sendRequest(ctx, http.MethodPatch, url+walletEndpoint+walletIdEndpoint, reqUpdate, &respData)
+		resp := s.sendRequest(ctx, http.MethodPatch, url+updateWalletEndpoint+walletIdEndpoint, reqUpdate, &respData)
 
 		convertedFunds, _ := s.walletService.ConvertCurrency(ctx, req.Currency, reqUpdate.Currency, reqDeposit.Amount)
 
@@ -136,7 +136,7 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 		reqUpdate.Currency = "XYZ"
 
 		walletIdEndpoint := respData.WalletID.String()
-		resp := s.sendRequest(ctx, http.MethodPatch, url+walletEndpoint+walletIdEndpoint, reqUpdate, nil)
+		resp := s.sendRequest(ctx, http.MethodPatch, url+updateWalletEndpoint+walletIdEndpoint, reqUpdate, nil)
 
 		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
 	})
@@ -148,7 +148,7 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 		req.Currency = "RUB"
 
 		walletIdEndpoint := uuid.New().String()
-		resp := s.sendRequest(ctx, http.MethodPatch, url+walletEndpoint+walletIdEndpoint, req, nil)
+		resp := s.sendRequest(ctx, http.MethodPatch, url+updateWalletEndpoint+walletIdEndpoint, req, nil)
 
 		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
 	})
@@ -166,7 +166,7 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, &respData)
 
 		walletIdEndpoint := respData.WalletID.String()
-		resp := s.sendRequest(ctx, http.MethodDelete, url+walletEndpoint+walletIdEndpoint, nil, nil)
+		resp := s.sendRequest(ctx, http.MethodDelete, url+deleteWalletEndpoint+walletIdEndpoint, nil, nil)
 
 		s.Require().Equal(http.StatusNoContent, resp.StatusCode)
 	})
@@ -175,7 +175,7 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 		ctx := context.Background()
 
 		walletIdEndpoint := uuid.New().String()
-		resp := s.sendRequest(ctx, http.MethodDelete, url+walletEndpoint+walletIdEndpoint, nil, nil)
+		resp := s.sendRequest(ctx, http.MethodDelete, url+deleteWalletEndpoint+walletIdEndpoint, nil, nil)
 
 		s.Require().Equal(http.StatusNotFound, resp.StatusCode)
 	})
@@ -291,9 +291,9 @@ func (s *IntegrationTestSuite) TestWalletHistory() {
 		reqUpdate.Owner = "Noname"
 		reqUpdate.Currency = "EUR"
 
-		_ = s.sendRequest(ctx, http.MethodPatch, url+walletEndpoint+walletIdEndpoint, reqUpdate, nil)
+		_ = s.sendRequest(ctx, http.MethodPatch, url+updateWalletEndpoint+walletIdEndpoint, reqUpdate, nil)
 
-		_ = s.sendRequest(ctx, http.MethodDelete, url+walletEndpoint+walletIdEndpoint, nil, nil)
+		_ = s.sendRequest(ctx, http.MethodDelete, url+deleteWalletEndpoint+walletIdEndpoint, nil, nil)
 
 		claimUUID := respData.WalletID.String()
 		claimEmail := "go-dev@mail.go"
