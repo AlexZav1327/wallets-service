@@ -33,8 +33,8 @@ type Handler struct {
 
 type WalletService interface {
 	CreateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
-	GetWalletsList(ctx context.Context, params models.ListingQueryParams) ([]models.ResponseWalletInstance, error)
 	GetWallet(ctx context.Context, id string) (models.ResponseWalletInstance, error)
+	GetWalletsList(ctx context.Context, params models.ListingQueryParams) ([]models.ResponseWalletInstance, error)
 	GetWalletHistory(ctx context.Context, id string, params models.RequestWalletHistory) (
 		[]models.ResponseWalletHistory, error)
 	UpdateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
@@ -72,7 +72,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	wallet.WalletID = uuid.New()
 
 	createdWallet, err := h.service.CreateWallet(r.Context(), wallet)
-	if errors.Is(err, postgres.ErrRequestNotIdempotent) {
+	if errors.Is(err, postgres.ErrRequestNotIdempotent) || errors.Is(err, postgres.ErrEmailNotUnique) {
 		w.WriteHeader(http.StatusConflict)
 
 		return
@@ -93,34 +93,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 
 	err = json.NewEncoder(w).Encode(createdWallet)
-	if err != nil {
-		h.log.Warningf("json.NewEncoder.Encode: %s", err)
-	}
-}
-
-func (h *Handler) getList(w http.ResponseWriter, r *http.Request) {
-	params := models.ListingQueryParams{}
-	params.TextFilter = r.URL.Query().Get("textFilter")
-
-	params.ItemsPerPage, _ = strconv.Atoi(r.URL.Query().Get("itemsPerPage"))
-	if params.ItemsPerPage == 0 {
-		params.ItemsPerPage = defaultLimit
-	}
-
-	params.Offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
-	params.Sorting = r.URL.Query().Get("sorting")
-	params.Descending, _ = strconv.ParseBool(r.URL.Query().Get("descending"))
-
-	walletsList, err := h.service.GetWalletsList(r.Context(), params)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-
-	err = json.NewEncoder(w).Encode(walletsList)
 	if err != nil {
 		h.log.Warningf("json.NewEncoder.Encode: %s", err)
 	}
@@ -151,6 +123,34 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
 	err = json.NewEncoder(w).Encode(wallet)
+	if err != nil {
+		h.log.Warningf("json.NewEncoder.Encode: %s", err)
+	}
+}
+
+func (h *Handler) getList(w http.ResponseWriter, r *http.Request) {
+	params := models.ListingQueryParams{}
+	params.TextFilter = r.URL.Query().Get("textFilter")
+
+	params.ItemsPerPage, _ = strconv.Atoi(r.URL.Query().Get("itemsPerPage"))
+	if params.ItemsPerPage == 0 {
+		params.ItemsPerPage = defaultLimit
+	}
+
+	params.Offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
+	params.Sorting = r.URL.Query().Get("sorting")
+	params.Descending, _ = strconv.ParseBool(r.URL.Query().Get("descending"))
+
+	walletsList, err := h.service.GetWalletsList(r.Context(), params)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	err = json.NewEncoder(w).Encode(walletsList)
 	if err != nil {
 		h.log.Warningf("json.NewEncoder.Encode: %s", err)
 	}
@@ -220,6 +220,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	updatedWallet, err := h.service.UpdateWallet(r.Context(), wallet)
 	if errors.Is(err, walletservice.ErrCurrencyNotValid) || errors.Is(err, postgres.ErrWalletNotFound) {
 		w.WriteHeader(http.StatusNotFound)
+
+		return
+	}
+
+	if errors.Is(err, postgres.ErrEmailNotUnique) {
+		w.WriteHeader(http.StatusConflict)
 
 		return
 	}

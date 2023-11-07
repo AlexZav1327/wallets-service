@@ -16,6 +16,7 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Kate"
 		req.Currency = "EUR"
 		req.Balance = 350
@@ -35,6 +36,7 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Alex"
 		req.Currency = "XYZ"
 
@@ -48,6 +50,7 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Alex"
 		req.Currency = "USD"
 
@@ -62,6 +65,7 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Kate"
 		req.Currency = "RUB"
 
@@ -91,6 +95,7 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Liza"
 		req.Currency = "EUR"
 
@@ -125,6 +130,7 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Liza"
 		req.Currency = "EUR"
 
@@ -158,6 +164,7 @@ func (s *IntegrationTestSuite) TestWalletCRUD() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Alex"
 		req.Currency = "RUB"
 
@@ -198,12 +205,14 @@ func (s *IntegrationTestSuite) TestWalletsList() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Alex"
 		req.Currency = "RUB"
 
 		_ = s.sendRequest(ctx, http.MethodPost, url+createWalletEndpoint, req, nil)
 
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Kate"
 		req.Currency = "USD"
 
@@ -220,6 +229,7 @@ func (s *IntegrationTestSuite) TestWalletsList() {
 		_ = s.sendRequest(ctx, http.MethodPut, url+walletEndpoint+walletIdEndpoint+deposit, reqDeposit, nil)
 
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Liza"
 		req.Currency = "EUR"
 
@@ -265,6 +275,7 @@ func (s *IntegrationTestSuite) TestWalletHistory() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Alex"
 		req.Currency = "USD"
 
@@ -274,6 +285,7 @@ func (s *IntegrationTestSuite) TestWalletHistory() {
 
 		reqDeposit := models.FundsOperations{}
 		reqDeposit.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		reqDeposit.Currency = "USD"
 		reqDeposit.Amount = 1000
 
@@ -282,6 +294,7 @@ func (s *IntegrationTestSuite) TestWalletHistory() {
 
 		reqWithdraw := models.FundsOperations{}
 		reqWithdraw.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		reqWithdraw.Currency = "USD"
 		reqWithdraw.Amount = 150
 
@@ -345,6 +358,7 @@ func (s *IntegrationTestSuite) TestWalletHistory() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Alex"
 		req.Currency = "USD"
 
@@ -383,6 +397,7 @@ func (s *IntegrationTestSuite) TestAuthorization() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Kate"
 		req.Currency = "RUB"
 

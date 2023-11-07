@@ -1,3 +1,4 @@
+//nolint:wrapcheck
 package main
 
 import (
@@ -8,6 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/AlexZav1327/service/internal/messages"
+	"github.com/AlexZav1327/service/internal/notifications"
 	"github.com/AlexZav1327/service/internal/postgres"
 	"github.com/AlexZav1327/service/internal/rates"
 	walletserver "github.com/AlexZav1327/service/internal/wallet-server"
@@ -16,6 +19,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	migrate "github.com/rubenv/sql-migrate"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -52,7 +56,9 @@ func main() {
 	}
 
 	exchangeRates := rates.New(logger)
-	walletsService := walletservice.New(pg, exchangeRates, logger)
+	message := messages.New(logger)
+	notification := notifications.New(logger)
+	walletsService := walletservice.New(pg, exchangeRates, message, notification, logger)
 	server := walletserver.New(
 		host,
 		port,
@@ -62,9 +68,18 @@ func main() {
 		mustGetPublicKey(verificationKey),
 	)
 
-	err = server.Run(ctx)
+	eg, ctx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		return server.Run(ctx)
+	})
+
+	eg.Go(func() error {
+		return walletsService.TrackerRun(ctx)
+	})
+
+	err = eg.Wait()
 	if err != nil {
-		logger.Panicf("server.Run: %s", err)
+		logrus.Panicf("eg.Wait: %s", err)
 	}
 }
 
