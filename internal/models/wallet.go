@@ -9,6 +9,7 @@ import (
 type RequestWalletInstance struct {
 	TransactionKey uuid.UUID `json:"transactionKey"`
 	WalletID       uuid.UUID `json:"walletId"`
+	Email          string    `json:"email"`
 	Owner          string    `json:"owner"`
 	Currency       string    `json:"currency"`
 	Balance        float32   `json:"balance"`
@@ -16,6 +17,7 @@ type RequestWalletInstance struct {
 
 type ResponseWalletInstance struct {
 	WalletID uuid.UUID `json:"walletId"`
+	Email    string    `json:"email"`
 	Owner    string    `json:"owner"`
 	Currency string    `json:"currency"`
 	Balance  float32   `json:"balance"`
@@ -45,6 +47,7 @@ type ListingQueryParams struct {
 
 type ResponseWalletHistory struct {
 	WalletID  uuid.UUID `json:"walletId"`
+	Email     string    `json:"email"`
 	Owner     string    `json:"owner"`
 	Currency  string    `json:"currency"`
 	Balance   float32   `json:"balance"`

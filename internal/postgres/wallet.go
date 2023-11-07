@@ -14,36 +14,56 @@ import (
 
 const (
 	createWalletQuery = `
-	INSERT INTO wallet (wallet_id, owner, currency) 
-	VALUES ($1, $2, $3)
-	RETURNING wallet_id, owner, currency, balance, created_at, updated_at;
+	INSERT INTO wallet (wallet_id, email, owner, currency) 
+	VALUES ($1, $2, $3, $4)
+	RETURNING wallet_id, email, owner, currency, balance, created_at, updated_at;
 	`
 	getWalletQuery = `
-	SELECT wallet_id, owner, currency, balance, created_at, updated_at 
+	SELECT wallet_id, email, owner, currency, balance, created_at, updated_at 
 	FROM wallet
-	WHERE wallet_id = $1;
+	WHERE wallet_id = $1
+	AND deleted = FALSE;
 	`
 	updateWalletQuery = `
 	UPDATE wallet 
-	SET owner = $2, currency = $3, balance = $4, updated_at = now()
+	SET email = $2, owner = $3, currency = $4, balance = $5, updated_at = now(), inactive_mailed = false
 	WHERE wallet_id = $1
-	RETURNING wallet_id, owner, currency, balance, created_at, updated_at;
+	AND deleted = FALSE
+	RETURNING wallet_id, email, owner, currency, balance, created_at, updated_at;
 	`
 	deleteWalletQuery = `
-	DELETE FROM wallet 
-	WHERE wallet_id = $1;
+	UPDATE wallet 
+	SET deleted = TRUE
+	WHERE wallet_id = $1
+	AND deleted = FALSE;
 	`
 	manageFundsQuery = `
 	UPDATE wallet
-	SET balance = $2, updated_at = now()
+	SET balance = $2, updated_at = now(), inactive_mailed = false
 	WHERE wallet_id = $1
-	RETURNING wallet_id, owner, currency, balance, created_at, updated_at;
+	AND deleted = FALSE
+	RETURNING wallet_id, email, owner, currency, balance, created_at, updated_at;
 	`
 	verifyTransactKeyQuery = `
 	INSERT INTO idempotency (transaction_key)
 	VALUES ($1)
 	`
+	mailInactiveQuery = `
+	UPDATE wallet
+	SET inactive_mailed = TRUE
+	WHERE updated_at <= NOW() - '1 month'::interval
+	AND inactive_mailed = FALSE
+	AND deleted = FALSE
+	`
+	deleteInactiveQuery = `
+	UPDATE wallet
+	SET deleted = TRUE
+	WHERE updated_at <= NOW() - '6 month'::interval
+	AND inactive_mailed = TRUE
+	AND deleted = FALSE 
+	`
 	walletID      = "wallet_id"
+	email         = "email"
 	owner         = "owner"
 	currency      = "currency"
 	balance       = "balance"
@@ -57,11 +77,12 @@ var (
 	ErrRequestNotIdempotent = errors.New("non-idempotent request")
 	ErrNoWalletToDelete     = errors.New("no wallet found to delete")
 	ErrInvalidWalletID      = errors.New("invalid walletID for type uuid")
+	ErrEmailNotUnique       = errors.New("non-unique email")
 )
 
 type querier interface {
-	Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error)
-	QueryRow(ctx context.Context, query string, args ...any) pgx.Row
+	Exec(ctx context.Context, query string, args ...interface{}) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, query string, args ...interface{}) pgx.Row
 }
 
 func (p *Postgres) CreateWallet(ctx context.Context, wallet walletmodel.RequestWalletInstance) (
@@ -86,12 +107,13 @@ func (p *Postgres) CreateWallet(ctx context.Context, wallet walletmodel.RequestW
 		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("idempotency: %w", err)
 	}
 
-	row := tx.QueryRow(ctx, createWalletQuery, wallet.WalletID, wallet.Owner, wallet.Currency)
+	row := tx.QueryRow(ctx, createWalletQuery, wallet.WalletID, wallet.Email, wallet.Owner, wallet.Currency)
 
 	var createdWallet walletmodel.ResponseWalletInstance
 
 	err = row.Scan(
 		&createdWallet.WalletID,
+		&createdWallet.Email,
 		&createdWallet.Owner,
 		&createdWallet.Currency,
 		&createdWallet.Balance,
@@ -99,6 +121,14 @@ func (p *Postgres) CreateWallet(ctx context.Context, wallet walletmodel.RequestW
 		&createdWallet.Updated,
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+
+		if errors.As(err, &pgErr) {
+			if pgerrcode.UniqueViolation == pgErr.SQLState() {
+				return walletmodel.ResponseWalletInstance{}, ErrEmailNotUnique
+			}
+		}
+
 		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("row.Scan: %w", err)
 	}
 
@@ -110,61 +140,20 @@ func (p *Postgres) CreateWallet(ctx context.Context, wallet walletmodel.RequestW
 	return createdWallet, nil
 }
 
-func (p *Postgres) GetWalletsList(ctx context.Context, params walletmodel.ListingQueryParams) (
-	[]walletmodel.ResponseWalletInstance, error,
-) {
-	tableColumnsList := map[string]string{
-		walletID:  walletID,
-		owner:     owner,
-		currency:  currency,
-		balance:   balance,
-		createdAt: createdAt,
-		updatedAt: updatedAt,
-	}
-
-	var args []interface{}
-
-	query := `
-	SELECT *
-	FROM wallet
-	WHERE TRUE`
-
-	updatedQuery, updatedArgs := p.buildQueryAndArgs(tableColumnsList, args, query, params)
-
-	rows, err := p.db.Query(ctx, updatedQuery, updatedArgs...)
-	if err != nil {
-		return nil, fmt.Errorf("db.Query: %w", err)
-	}
-
-	defer rows.Close()
-
-	walletsList := make([]walletmodel.ResponseWalletInstance, 0)
-
-	for rows.Next() {
-		var wallet walletmodel.ResponseWalletInstance
-
-		err = rows.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Currency, &wallet.Balance, &wallet.Created, &wallet.Updated)
-		if err != nil {
-			return nil, fmt.Errorf("row.Scan: %w", err)
-		}
-
-		walletsList = append(walletsList, wallet)
-	}
-
-	err = rows.Err()
-	if err != nil {
-		return nil, fmt.Errorf("rows.Err: %w", err)
-	}
-
-	return walletsList, nil
-}
-
 func (p *Postgres) GetWallet(ctx context.Context, id string) (walletmodel.ResponseWalletInstance, error) {
 	row := p.db.QueryRow(ctx, getWalletQuery, id)
 
 	var wallet walletmodel.ResponseWalletInstance
 
-	err := row.Scan(&wallet.WalletID, &wallet.Owner, &wallet.Currency, &wallet.Balance, &wallet.Created, &wallet.Updated)
+	err := row.Scan(
+		&wallet.WalletID,
+		&wallet.Email,
+		&wallet.Owner,
+		&wallet.Currency,
+		&wallet.Balance,
+		&wallet.Created,
+		&wallet.Updated,
+	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return walletmodel.ResponseWalletInstance{}, ErrWalletNotFound
@@ -184,11 +173,70 @@ func (p *Postgres) GetWallet(ctx context.Context, id string) (walletmodel.Respon
 	return wallet, nil
 }
 
+func (p *Postgres) GetWalletsList(ctx context.Context, params walletmodel.ListingQueryParams) (
+	[]walletmodel.ResponseWalletInstance, error,
+) {
+	tableColumnsList := map[string]string{
+		walletID:  walletID,
+		email:     email,
+		owner:     owner,
+		currency:  currency,
+		balance:   balance,
+		createdAt: createdAt,
+		updatedAt: updatedAt,
+	}
+
+	var args []interface{}
+
+	query := `
+	SELECT wallet_id, email, owner, currency, balance, created_at, updated_at
+	FROM wallet
+	WHERE TRUE AND deleted = FALSE`
+
+	updatedQuery, updatedArgs := p.buildQueryAndArgs(tableColumnsList, args, query, params)
+
+	rows, err := p.db.Query(ctx, updatedQuery, updatedArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("db.Query: %w", err)
+	}
+
+	defer rows.Close()
+
+	walletsList := make([]walletmodel.ResponseWalletInstance, 0)
+
+	for rows.Next() {
+		var wallet walletmodel.ResponseWalletInstance
+
+		err = rows.Scan(
+			&wallet.WalletID,
+			&wallet.Email,
+			&wallet.Owner,
+			&wallet.Currency,
+			&wallet.Balance,
+			&wallet.Created,
+			&wallet.Updated,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("row.Scan: %w", err)
+		}
+
+		walletsList = append(walletsList, wallet)
+	}
+
+	err = rows.Err()
+	if err != nil {
+		return nil, fmt.Errorf("rows.Err: %w", err)
+	}
+
+	return walletsList, nil
+}
+
 func (p *Postgres) GetWalletHistory(ctx context.Context, id string, params walletmodel.RequestWalletHistory) (
 	[]walletmodel.ResponseWalletHistory, error,
 ) {
 	tableColumnsList := map[string]string{
 		walletID:      walletID,
+		email:         email,
 		owner:         owner,
 		currency:      currency,
 		balance:       balance,
@@ -224,14 +272,8 @@ func (p *Postgres) GetWalletHistory(ctx context.Context, id string, params walle
 	for rows.Next() {
 		var wallet walletmodel.ResponseWalletHistory
 
-		err = rows.Scan(
-			&wallet.WalletID,
-			&wallet.Owner,
-			&wallet.Currency,
-			&wallet.Balance,
-			&wallet.Created,
-			&wallet.Operation,
-		)
+		err = rows.Scan(&wallet.WalletID, &wallet.Email, &wallet.Owner, &wallet.Currency, &wallet.Balance, &wallet.Created,
+			&wallet.Operation)
 		if err != nil {
 			return nil, fmt.Errorf("row.Scan: %w", err)
 		}
@@ -254,6 +296,7 @@ func (p *Postgres) UpdateWallet(ctx context.Context, wallet walletmodel.RequestW
 		ctx,
 		updateWalletQuery,
 		wallet.WalletID,
+		wallet.Email,
 		wallet.Owner,
 		wallet.Currency,
 		wallet.Balance,
@@ -263,6 +306,7 @@ func (p *Postgres) UpdateWallet(ctx context.Context, wallet walletmodel.RequestW
 
 	err := row.Scan(
 		&updatedWallet.WalletID,
+		&updatedWallet.Email,
 		&updatedWallet.Owner,
 		&updatedWallet.Currency,
 		&updatedWallet.Balance,
@@ -272,6 +316,14 @@ func (p *Postgres) UpdateWallet(ctx context.Context, wallet walletmodel.RequestW
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return walletmodel.ResponseWalletInstance{}, ErrWalletNotFound
+		}
+
+		var pgErr *pgconn.PgError
+
+		if errors.As(err, &pgErr) {
+			if pgerrcode.UniqueViolation == pgErr.SQLState() {
+				return walletmodel.ResponseWalletInstance{}, ErrEmailNotUnique
+			}
 		}
 
 		return walletmodel.ResponseWalletInstance{}, fmt.Errorf("row.Scan: %w", err)
@@ -359,6 +411,20 @@ func (p *Postgres) TransferFunds(ctx context.Context, key uuid.UUID, idSrc, idDs
 	return dstWallet, nil
 }
 
+func (p *Postgres) TrackInactiveWallets(ctx context.Context) error {
+	_, err := p.db.Exec(ctx, mailInactiveQuery)
+	if err != nil {
+		return fmt.Errorf("exec(ctx, mailInactiveQuery): %w", err)
+	}
+
+	_, err = p.db.Exec(ctx, deleteInactiveQuery)
+	if err != nil {
+		return fmt.Errorf("exec(ctx, deleteInactiveQuery): %w", err)
+	}
+
+	return nil
+}
+
 func (p *Postgres) idempotency(ctx context.Context, q querier, key string) error {
 	_, err := q.Exec(ctx, verifyTransactKeyQuery, key)
 
@@ -386,6 +452,7 @@ func (p *Postgres) queryRowToWallet(ctx context.Context, tx pgx.Tx, query, id st
 
 	err := row.Scan(
 		&wallet.WalletID,
+		&wallet.Email,
 		&wallet.Owner,
 		&wallet.Currency,
 		&wallet.Balance,

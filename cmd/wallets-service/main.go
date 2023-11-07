@@ -62,6 +62,11 @@ func main() {
 		mustGetPublicKey(verificationKey),
 	)
 
+	err = walletsService.TrackerRun(ctx)
+	if err != nil {
+		logger.Panicf("walletsService.TrackerRun: %s", err)
+	}
+
 	err = server.Run(ctx)
 	if err != nil {
 		logger.Panicf("server.Run: %s", err)

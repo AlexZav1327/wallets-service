@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	eur = "EUR"
-	rub = "RUB"
-	usd = "USD"
+	eur            = "EUR"
+	rub            = "RUB"
+	usd            = "USD"
+	tickerInterval = 1
 )
 
 var (
@@ -32,8 +33,8 @@ type Service struct {
 
 type WalletStore interface {
 	CreateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
-	GetWalletsList(ctx context.Context, params models.ListingQueryParams) ([]models.ResponseWalletInstance, error)
 	GetWallet(ctx context.Context, id string) (models.ResponseWalletInstance, error)
+	GetWalletsList(ctx context.Context, params models.ListingQueryParams) ([]models.ResponseWalletInstance, error)
 	GetWalletHistory(ctx context.Context, id string, params models.RequestWalletHistory) (
 		[]models.ResponseWalletHistory, error)
 	UpdateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
@@ -42,6 +43,7 @@ type WalletStore interface {
 		models.ResponseWalletInstance, error)
 	TransferFunds(ctx context.Context, transactionKey uuid.UUID, idSrc, idDst string, balanceSrc, balanceDst float32) (
 		models.ResponseWalletInstance, error)
+	TrackInactiveWallets(ctx context.Context) error
 }
 
 type ExchangeRates interface {
@@ -80,17 +82,6 @@ func (s *Service) CreateWallet(ctx context.Context, wallet models.RequestWalletI
 	return createdWallet, nil
 }
 
-func (s *Service) GetWalletsList(ctx context.Context, params models.ListingQueryParams) (
-	[]models.ResponseWalletInstance, error,
-) {
-	walletsList, err := s.pg.GetWalletsList(ctx, params)
-	if err != nil {
-		return nil, fmt.Errorf("pg.GetWalletsList: %w", err)
-	}
-
-	return walletsList, nil
-}
-
 func (s *Service) GetWallet(ctx context.Context, id string) (models.ResponseWalletInstance, error) {
 	started := time.Now()
 	defer func() {
@@ -103,6 +94,17 @@ func (s *Service) GetWallet(ctx context.Context, id string) (models.ResponseWall
 	}
 
 	return wallet, nil
+}
+
+func (s *Service) GetWalletsList(ctx context.Context, params models.ListingQueryParams) (
+	[]models.ResponseWalletInstance, error,
+) {
+	walletsList, err := s.pg.GetWalletsList(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("pg.GetWalletsList: %w", err)
+	}
+
+	return walletsList, nil
 }
 
 func (s *Service) GetWalletHistory(ctx context.Context, id string, params models.RequestWalletHistory) (
@@ -347,4 +349,28 @@ func (*Service) ValidateCurrency(verifiedCurrency string) error {
 	}
 
 	return ErrCurrencyNotValid
+}
+
+func (s *Service) TrackerRun(ctx context.Context) error {
+	trackingTicker := time.NewTicker(tickerInterval * time.Hour)
+
+	var err error
+
+	go func() {
+		for {
+			select {
+			case <-trackingTicker.C:
+				err = s.pg.TrackInactiveWallets(ctx)
+
+			case <-ctx.Done():
+				trackingTicker.Stop()
+			}
+		}
+	}()
+
+	if err != nil {
+		return fmt.Errorf("pg.TrackInactiveWallet: %w", err)
+	}
+
+	return nil
 }
