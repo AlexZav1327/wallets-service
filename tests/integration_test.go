@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AlexZav1327/service/internal/messages"
+	"github.com/AlexZav1327/service/internal/notifications"
 	"github.com/AlexZav1327/service/internal/postgres"
 	"github.com/AlexZav1327/service/internal/rates"
 	walletserver "github.com/AlexZav1327/service/internal/wallet-server"
@@ -44,6 +46,8 @@ type IntegrationTestSuite struct {
 	server        *walletserver.Server
 	walletService *walletservice.Service
 	xr            *rates.Rates
+	message       *messages.Messages
+	notifications *notifications.Notifications
 }
 
 func (s *IntegrationTestSuite) SetupSuite() {
@@ -64,8 +68,10 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	s.Require().NoError(err)
 
 	s.xr = rates.New(logger)
+	s.message = messages.New(logger)
+	s.notifications = notifications.New(logger)
 
-	s.walletService = walletservice.New(s.pg, s.xr, logger)
+	s.walletService = walletservice.New(s.pg, s.xr, s.message, s.notifications, logger)
 
 	privateKey, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(signingKey))
 	s.Require().NoError(err)
@@ -101,7 +107,7 @@ func TestIntegrationTestSuite(t *testing.T) {
 	suite.Run(t, new(IntegrationTestSuite))
 }
 
-func (s *IntegrationTestSuite) sendRequest(ctx context.Context, method, endpoint string, body interface{},
+func (s *IntegrationTestSuite) sendRequest(ctx context.Context, method, endpoint string, body,
 	dest interface{},
 ) *http.Response {
 	s.T().Helper()
@@ -136,8 +142,8 @@ func (s *IntegrationTestSuite) sendRequest(ctx context.Context, method, endpoint
 	return resp
 }
 
-func (s *IntegrationTestSuite) sendRequestWithCustomClaims(ctx context.Context, method, endpoint, claimUUID, claimEmail string, body interface{},
-	dest interface{},
+func (s *IntegrationTestSuite) sendRequestWithCustomClaims(ctx context.Context, method, endpoint, claimUUID,
+	claimEmail string, body, dest interface{},
 ) *http.Response {
 	s.T().Helper()
 
@@ -171,7 +177,7 @@ func (s *IntegrationTestSuite) sendRequestWithCustomClaims(ctx context.Context, 
 	return resp
 }
 
-func (s *IntegrationTestSuite) sendRequestWithInvalidToken(ctx context.Context, method, endpoint string, body interface{},
+func (s *IntegrationTestSuite) sendRequestWithInvalidToken(ctx context.Context, method, endpoint string, body,
 	dest interface{},
 ) *http.Response {
 	s.T().Helper()

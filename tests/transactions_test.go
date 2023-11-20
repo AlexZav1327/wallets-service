@@ -14,6 +14,7 @@ func (s *IntegrationTestSuite) TestDeposit() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Kate"
 		req.Currency = "RUB"
 
@@ -38,6 +39,7 @@ func (s *IntegrationTestSuite) TestDeposit() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Kate"
 		req.Currency = "RUB"
 
@@ -68,6 +70,7 @@ func (s *IntegrationTestSuite) TestDeposit() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Alex"
 		req.Currency = "USD"
 
@@ -91,6 +94,7 @@ func (s *IntegrationTestSuite) TestDeposit() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Alex"
 		req.Currency = "USD"
 
@@ -114,6 +118,7 @@ func (s *IntegrationTestSuite) TestDeposit() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Alex"
 		req.Currency = "USD"
 
@@ -139,6 +144,7 @@ func (s *IntegrationTestSuite) TestWithdraw() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Kate"
 		req.Currency = "RUB"
 
@@ -170,6 +176,7 @@ func (s *IntegrationTestSuite) TestWithdraw() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Kate"
 		req.Currency = "RUB"
 
@@ -203,6 +210,7 @@ func (s *IntegrationTestSuite) TestWithdraw() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Kate"
 		req.Currency = "RUB"
 
@@ -233,6 +241,7 @@ func (s *IntegrationTestSuite) TestWithdraw() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Kate"
 		req.Currency = "RUB"
 
@@ -263,6 +272,7 @@ func (s *IntegrationTestSuite) TestWithdraw() {
 
 		req := models.RequestWalletInstance{}
 		req.TransactionKey = uuid.New()
+		req.Email = uuid.New().String()
 		req.Owner = "Kate"
 		req.Currency = "RUB"
 
@@ -295,6 +305,7 @@ func (s *IntegrationTestSuite) TestTransfer() {
 
 		reqSrcWallet := models.RequestWalletInstance{}
 		reqSrcWallet.TransactionKey = uuid.New()
+		reqSrcWallet.Email = uuid.New().String()
 		reqSrcWallet.Owner = "Alex"
 		reqSrcWallet.Currency = "RUB"
 
@@ -312,6 +323,7 @@ func (s *IntegrationTestSuite) TestTransfer() {
 
 		reqDstWallet := models.RequestWalletInstance{}
 		reqDstWallet.TransactionKey = uuid.New()
+		reqDstWallet.Email = uuid.New().String()
 		reqDstWallet.Owner = "Kate"
 		reqDstWallet.Currency = "USD"
 
@@ -342,6 +354,7 @@ func (s *IntegrationTestSuite) TestTransfer() {
 
 		reqSrcWallet := models.RequestWalletInstance{}
 		reqSrcWallet.TransactionKey = uuid.New()
+		reqSrcWallet.Email = uuid.New().String()
 		reqSrcWallet.Owner = "Alex"
 		reqSrcWallet.Currency = "EUR"
 
@@ -359,6 +372,7 @@ func (s *IntegrationTestSuite) TestTransfer() {
 
 		reqDstWallet := models.RequestWalletInstance{}
 		reqDstWallet.TransactionKey = uuid.New()
+		reqDstWallet.Email = uuid.New().String()
 		reqDstWallet.Owner = "Kate"
 		reqDstWallet.Currency = "EUR"
 
@@ -392,6 +406,7 @@ func (s *IntegrationTestSuite) TestTransfer() {
 
 		reqSrcWallet := models.RequestWalletInstance{}
 		reqSrcWallet.TransactionKey = uuid.New()
+		reqSrcWallet.Email = uuid.New().String()
 		reqSrcWallet.Owner = "Alex"
 		reqSrcWallet.Currency = "RUB"
 

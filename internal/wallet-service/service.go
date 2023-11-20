@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	eur = "EUR"
-	rub = "RUB"
-	usd = "USD"
+	eur            = "EUR"
+	rub            = "RUB"
+	usd            = "USD"
+	tickerInterval = 12
 )
 
 var (
@@ -24,16 +25,18 @@ var (
 )
 
 type Service struct {
-	pg      WalletStore
-	xr      ExchangeRates
-	log     *logrus.Entry
-	metrics *metrics
+	pg           walletStore
+	xr           exchangeRates
+	message      messageCreator
+	notification notifier
+	log          *logrus.Entry
+	metrics      *metrics
 }
 
-type WalletStore interface {
+type walletStore interface {
 	CreateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
-	GetWalletsList(ctx context.Context, params models.ListingQueryParams) ([]models.ResponseWalletInstance, error)
 	GetWallet(ctx context.Context, id string) (models.ResponseWalletInstance, error)
+	GetWalletsList(ctx context.Context, params models.ListingQueryParams) ([]models.ResponseWalletInstance, error)
 	GetWalletHistory(ctx context.Context, id string, params models.RequestWalletHistory) (
 		[]models.ResponseWalletHistory, error)
 	UpdateWallet(ctx context.Context, wallet models.RequestWalletInstance) (models.ResponseWalletInstance, error)
@@ -42,25 +45,36 @@ type WalletStore interface {
 		models.ResponseWalletInstance, error)
 	TransferFunds(ctx context.Context, transactionKey uuid.UUID, idSrc, idDst string, balanceSrc, balanceDst float32) (
 		models.ResponseWalletInstance, error)
+	TrackInactiveWallets(ctx context.Context) ([]models.ResponseWalletInstance, error)
 }
 
-type ExchangeRates interface {
+type exchangeRates interface {
 	GetRate(ctx context.Context, currentCurrency, requestedCurrency string) (models.ExchangeRate, error)
 }
 
-func New(pg WalletStore, xr ExchangeRates, log *logrus.Logger) *Service {
+type messageCreator interface {
+	CreateMessage(wallet models.ResponseWalletInstance) ([]byte, error)
+}
+
+type notifier interface {
+	Notify(ctx context.Context, message []byte) error
+}
+
+func New(pg walletStore, xr exchangeRates, message messageCreator, notification notifier, log *logrus.Logger) *Service {
 	return &Service{
-		pg:      pg,
-		xr:      xr,
-		log:     log.WithField("module", "service"),
-		metrics: newMetrics(),
+		pg:           pg,
+		xr:           xr,
+		log:          log.WithField("module", "service"),
+		metrics:      newMetrics(),
+		message:      message,
+		notification: notification,
 	}
 }
 
 func (s *Service) CreateWallet(ctx context.Context, wallet models.RequestWalletInstance) (
 	models.ResponseWalletInstance, error,
 ) {
-	err := s.ValidateCurrency(wallet.Currency)
+	err := s.validateCurrency(wallet.Currency)
 	if err != nil {
 		return models.ResponseWalletInstance{}, ErrCurrencyNotValid
 	}
@@ -80,17 +94,6 @@ func (s *Service) CreateWallet(ctx context.Context, wallet models.RequestWalletI
 	return createdWallet, nil
 }
 
-func (s *Service) GetWalletsList(ctx context.Context, params models.ListingQueryParams) (
-	[]models.ResponseWalletInstance, error,
-) {
-	walletsList, err := s.pg.GetWalletsList(ctx, params)
-	if err != nil {
-		return nil, fmt.Errorf("pg.GetWalletsList: %w", err)
-	}
-
-	return walletsList, nil
-}
-
 func (s *Service) GetWallet(ctx context.Context, id string) (models.ResponseWalletInstance, error) {
 	started := time.Now()
 	defer func() {
@@ -103,6 +106,17 @@ func (s *Service) GetWallet(ctx context.Context, id string) (models.ResponseWall
 	}
 
 	return wallet, nil
+}
+
+func (s *Service) GetWalletsList(ctx context.Context, params models.ListingQueryParams) (
+	[]models.ResponseWalletInstance, error,
+) {
+	walletsList, err := s.pg.GetWalletsList(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("pg.GetWalletsList: %w", err)
+	}
+
+	return walletsList, nil
 }
 
 func (s *Service) GetWalletHistory(ctx context.Context, id string, params models.RequestWalletHistory) (
@@ -119,7 +133,7 @@ func (s *Service) GetWalletHistory(ctx context.Context, id string, params models
 func (s *Service) UpdateWallet(ctx context.Context, wallet models.RequestWalletInstance) (
 	models.ResponseWalletInstance, error,
 ) {
-	err := s.ValidateCurrency(wallet.Currency)
+	err := s.validateCurrency(wallet.Currency)
 	if err != nil {
 		return models.ResponseWalletInstance{}, ErrCurrencyNotValid
 	}
@@ -174,7 +188,7 @@ func (s *Service) DeleteWallet(ctx context.Context, id string) error {
 func (s *Service) DepositFunds(ctx context.Context, id string, depositFunds models.FundsOperations) (
 	models.ResponseWalletInstance, error,
 ) {
-	err := s.ValidateCurrency(depositFunds.Currency)
+	err := s.validateCurrency(depositFunds.Currency)
 	if err != nil {
 		return models.ResponseWalletInstance{}, ErrCurrencyNotValid
 	}
@@ -218,7 +232,7 @@ func (s *Service) DepositFunds(ctx context.Context, id string, depositFunds mode
 func (s *Service) WithdrawFunds(ctx context.Context, id string, withdrawFunds models.FundsOperations) (
 	models.ResponseWalletInstance, error,
 ) {
-	err := s.ValidateCurrency(withdrawFunds.Currency)
+	err := s.validateCurrency(withdrawFunds.Currency)
 	if err != nil {
 		return models.ResponseWalletInstance{}, ErrCurrencyNotValid
 	}
@@ -266,7 +280,7 @@ func (s *Service) WithdrawFunds(ctx context.Context, id string, withdrawFunds mo
 func (s *Service) TransferFunds(ctx context.Context, idSrc, idDst string, transferFunds models.FundsOperations) (
 	models.ResponseWalletInstance, error,
 ) {
-	err := s.ValidateCurrency(transferFunds.Currency)
+	err := s.validateCurrency(transferFunds.Currency)
 	if err != nil {
 		return models.ResponseWalletInstance{}, ErrCurrencyNotValid
 	}
@@ -337,7 +351,7 @@ func (s *Service) ConvertCurrency(ctx context.Context, currentCurrency, requeste
 	return convertedBalance, nil
 }
 
-func (*Service) ValidateCurrency(verifiedCurrency string) error {
+func (*Service) validateCurrency(verifiedCurrency string) error {
 	currenciesList := []string{eur, rub, usd}
 
 	for _, v := range currenciesList {
@@ -347,4 +361,47 @@ func (*Service) ValidateCurrency(verifiedCurrency string) error {
 	}
 
 	return ErrCurrencyNotValid
+}
+
+func (s *Service) TrackerRun(ctx context.Context) error {
+	trackingTicker := time.NewTicker(tickerInterval * time.Hour)
+	defer trackingTicker.Stop()
+
+	var err error
+
+	var walletsForNotification []models.ResponseWalletInstance
+
+	for {
+		select {
+		case <-trackingTicker.C:
+			walletsForNotification, err = s.pg.TrackInactiveWallets(ctx)
+			if err != nil {
+				return fmt.Errorf("pg.TrackInactiveWallets: %w", err)
+			}
+
+			err = s.sendNotification(ctx, walletsForNotification)
+			if err != nil {
+				return fmt.Errorf("sendNotification: %w", err)
+			}
+
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
+func (s *Service) sendNotification(ctx context.Context, walletsForNotification []models.ResponseWalletInstance) error {
+	for _, wallet := range walletsForNotification {
+		message, err := s.message.CreateMessage(wallet)
+		if err != nil {
+			return fmt.Errorf("message.CreateMessage: %w", err)
+		}
+
+		err = s.notification.Notify(ctx, message)
+		if err != nil {
+			return fmt.Errorf("notification.Notify: %w", err)
+		}
+	}
+
+	return nil
 }
