@@ -81,7 +81,7 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}()
 
-	s.log.Infof("Server is running at port %d...", s.port)
+	s.log.Infof("Server is running at port %d", s.port)
 
 	err := s.Server.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {

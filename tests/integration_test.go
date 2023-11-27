@@ -46,7 +46,7 @@ type IntegrationTestSuite struct {
 	server        *walletserver.Server
 	walletService *walletservice.Service
 	xr            *rates.Rates
-	message       *messages.Messages
+	message       *messages.Message
 	notifications *notifications.Notifications
 }
 
@@ -87,8 +87,6 @@ func (s *IntegrationTestSuite) SetupSuite() {
 
 	time.Sleep(250 * time.Millisecond)
 }
-
-func (s *IntegrationTestSuite) SetupTest() {}
 
 func (s *IntegrationTestSuite) TearDownTest() {
 	ctx := context.Background()

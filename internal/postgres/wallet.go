@@ -46,7 +46,7 @@ const (
 	`
 	verifyTransactKeyQuery = `
 	INSERT INTO idempotency (transaction_key)
-	VALUES ($1)
+	VALUES ($1);
 	`
 	mailInactiveQuery = `
 	UPDATE wallet
@@ -69,7 +69,6 @@ const (
 var (
 	ErrWalletNotFound       = errors.New("no such wallet")
 	ErrRequestNotIdempotent = errors.New("non-idempotent request")
-	ErrNoWalletToDelete     = errors.New("no wallet found to delete")
 	ErrInvalidWalletID      = errors.New("invalid walletID for type uuid")
 	ErrEmailNotUnique       = errors.New("non-unique email")
 )
@@ -333,7 +332,7 @@ func (p *Postgres) DeleteWallet(ctx context.Context, id string) error {
 	}
 
 	if commandTag.RowsAffected() != 1 {
-		return ErrNoWalletToDelete
+		return ErrWalletNotFound
 	}
 
 	return nil
