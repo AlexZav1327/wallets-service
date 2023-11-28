@@ -248,7 +248,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	err := h.service.DeleteWallet(r.Context(), id)
-	if errors.Is(err, postgres.ErrNoWalletToDelete) {
+	if errors.Is(err, postgres.ErrWalletNotFound) {
 		w.WriteHeader(http.StatusNotFound)
 
 		return
