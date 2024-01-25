@@ -19,12 +19,8 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	migrate "github.com/rubenv/sql-migrate"
 	"github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 	"golang.org/x/sync/errgroup"
-)
-
-const (
-	port = 8080
-	host = ""
 )
 
 //go:embed private.pem
@@ -34,10 +30,23 @@ var embedSigningKey string
 var embedVerificationKey string
 
 func main() {
+	viper.SetConfigName("config")
+	viper.AddConfigPath("./config")
+
+	if err := viper.BindEnv("database.dsn", "PG_DSN"); err != nil {
+		logrus.Warningf("viper.BindEnv: %s", err)
+	}
+
+	if err := viper.ReadInConfig(); err != nil {
+		logrus.Panicf("viper.ReadInConfig: %s", err)
+	}
+
 	var (
-		pgDSN           = getEnv(os.Getenv("PG_DSN"), "postgres://user:secret@localhost:5432/postgres?sslmode=disable")
-		signingKey      = getEnv(os.Getenv("PRIVATE_SIGNING_KEY"), embedSigningKey)
-		verificationKey = getEnv(os.Getenv("PUBLIC_VERIFICATION_KEY"), embedVerificationKey)
+		pgDSN           = viper.GetString("database.dsn")
+		host            = viper.GetString("server.host")
+		port            = viper.GetInt("server.port")
+		signingKey      = getEnv("PRIVATE_SIGNING_KEY", embedSigningKey)
+		verificationKey = getEnv("PUBLIC_VERIFICATION_KEY", embedVerificationKey)
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
@@ -50,8 +59,7 @@ func main() {
 		logger.Panicf("postgres.ConnectDB: %s", err)
 	}
 
-	err = pg.Migrate(migrate.Up)
-	if err != nil {
+	if err = pg.Migrate(migrate.Up); err != nil {
 		logger.Panicf("Migrate: %s", err)
 	}
 
@@ -77,8 +85,7 @@ func main() {
 		return walletsService.TrackerRun(ctx)
 	})
 
-	err = eg.Wait()
-	if err != nil {
+	if err = eg.Wait(); err != nil {
 		logrus.Panicf("eg.Wait: %s", err)
 	}
 }

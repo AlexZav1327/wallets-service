@@ -41,6 +41,11 @@ $ make run
 # App, database and migration
 $ make test
 ```
+#### Linters:
+```shell
+# Run linters
+$ make lint
+```
 
 ## API methods description
 ### Create wallet
