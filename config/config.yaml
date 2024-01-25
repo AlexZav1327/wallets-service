@@ -1,0 +1,6 @@
+database:
+  dsn: "postgres://user:secret@localhost:5432/postgres?sslmode=disable"
+
+server:
+  host: ""
+  port: 8080

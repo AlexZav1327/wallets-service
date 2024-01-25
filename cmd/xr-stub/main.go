@@ -18,8 +18,7 @@ func main() {
 	rateService := xrservice.New(logger)
 	server := xrserver.New("", 8091, rateService, logger)
 
-	err := server.Run(ctx)
-	if err != nil {
+	if err := server.Run(ctx); err != nil {
 		logger.Panicf("server.Run: %s", err)
 	}
 }
